@@ -1,0 +1,1056 @@
+---
+title: "Cross-species co-expression analysis with coexpr"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Cross-species co-expression analysis with coexpr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## Introduction
+
+The `coexpr` package implements the cross-species comparative transcriptomics methodology from **Grønvold & Hvidsten**. This approach allows you to compare gene regulation across species without requiring directly comparable samples (same tissues, developmental stages, or conditions).
+
+**Key innovation**: Uses 1:1 orthologous genes as a "reference frame" to compare co-expression patterns indirectly.
+
+## Installation
+
+```{r, eval=FALSE}
+# Install from source
+devtools::install_local("/path/to/coexpr")
+
+# Or if available on CRAN (future)
+install.packages("coexpr")
+```
+
+```{r load}
+library(coexpr)
+library(ggplot2)
+library(dplyr)
+```
+
+## Input data format
+
+The `coexpr` package requires three inputs:
+
+### 1. Expression matrices
+
+Each species needs a numeric matrix with:
+- **Rows**: Genes (with gene IDs as rownames)
+- **Columns**: Samples
+
+```{r input_format_expr, eval=FALSE}
+# Example expression matrix structure
+#              sample1  sample2  sample3  ...
+# GeneA         5.2      4.8      6.1
+# GeneB         3.1      3.5      2.9
+# GeneC         7.8      8.2      7.5
+# ...
+
+# Check your matrix format
+dim(expr_matrix)           # genes × samples
+head(rownames(expr_matrix)) # gene IDs
+```
+
+**Recommendations**:
+- Use log-transformed or VST-normalized expression values
+- Remove genes with zero variance or too many missing values
+- Ensure gene IDs match those in your ortholog table
+
+### 2. Ortholog table
+
+A data frame with pairwise ortholog relationships:
+
+| Column | Description |
+|--------|-------------|
+| `gene_sp1` | Gene ID from species 1 |
+| `gene_sp2` | Gene ID from species 2 |
+| `type` (optional) | Ortholog type: "1:1", "1:N", "N:1", or "N:M" |
+
+```{r input_format_ortho, eval=FALSE}
+# Example ortholog table
+#   gene_sp1    gene_sp2    type
+# 1 AT1G01010   Os01g0100100  1:1
+# 2 AT1G01020   Os01g0100200  1:1
+# 3 AT1G01030   Os01g0100300  1:N
+# ...
+```
+
+**Sources for ortholog data**:
+- [OrthoFinder](https://github.com/davidemms/OrthoFinder) - recommended
+- [Ensembl Compara](https://www.ensembl.org/info/genome/compara/index.html)
+- [PLAZA](https://bioinformatics.psb.ugent.be/plaza/)
+- [Phytozome](https://phytozome.jgi.doe.gov/)
+
+### 3. Gene ID consistency
+
+Gene IDs must match between expression matrices and ortholog tables:
+
+```{r input_format_check, eval=FALSE}
+# Check overlap
+genes_in_expr <- rownames(expr_sp1)
+genes_in_ortho <- unique(orthologs$gene_sp1)
+
+overlap <- intersect(genes_in_expr, genes_in_ortho)
+cat("Genes in expression matrix:", length(genes_in_expr), "\n")
+cat("Genes in ortholog table:", length(genes_in_ortho), "\n")
+cat("Overlap:", length(overlap), "\n")
+```
+
+## Example data: *Brachypodium* leaf tissue
+
+For this vignette, we use real RNA-seq data from **leaf tissue** of two *Brachypodium* grass species:
+- ***Brachypodium distachyon*** (annual)
+- ***Brachypodium sylvaticum*** (perennial)
+
+The expression data is VST-transformed (variance-stabilized transformation) from DESeq2, filtered to leaf samples only. Orthology relationships were determined using OrthoFinder.
+
+```{r load_data}
+# Load prepared Brachypodium leaf data
+# (See data-raw/prepare_brachypodium_data.R for data preparation)
+
+# Try loading from installed package first
+extdata_path <- system.file("extdata", "expr_bdis_small.rds",
+                            package = "coexpr",
+                            mustWork = FALSE)
+
+if (file.exists(extdata_path)) {
+  # Load from installed package
+  expr_bdis <- readRDS(system.file("extdata", "expr_bdis_small.rds", package = "coexpr"))
+  expr_bsyl <- readRDS(system.file("extdata", "expr_bsyl_small.rds", package = "coexpr"))
+  orthologs_all <- readRDS(system.file("extdata", "brachypodium_orthologs_small.rds", package = "coexpr"))
+} else if (file.exists("../data-raw/expr_bdis_small.rds")) {
+  # Load from data-raw during development
+  expr_bdis <- readRDS("../data-raw/expr_bdis_small.rds")
+  expr_bsyl <- readRDS("../data-raw/expr_bsyl_small.rds")
+  orthologs_all <- readRDS("../data-raw/brachypodium_orthologs_small.rds")
+} else if (file.exists("../inst/extdata/expr_bdis_small.rds")) {
+  # Load from inst/extdata during development
+  expr_bdis <- readRDS("../inst/extdata/expr_bdis_small.rds")
+  expr_bsyl <- readRDS("../inst/extdata/expr_bsyl_small.rds")
+  orthologs_all <- readRDS("../inst/extdata/brachypodium_orthologs_small.rds")
+} else {
+  stop("Could not find Brachypodium data files. Please run data-raw/prepare_brachypodium_data.R")
+}
+
+# Inspect data
+cat("Expression data loaded (leaf tissue):\n")
+cat("  B. distachyon:", nrow(expr_bdis), "genes ×", ncol(expr_bdis), "samples\n")
+cat("  B. sylvaticum:", nrow(expr_bsyl), "genes ×", ncol(expr_bsyl), "samples\n")
+cat("\nOrtholog pairs:", nrow(orthologs_all), "\n")
+cat("Ortholog type distribution:\n")
+print(table(orthologs_all$type))
+```
+
+## Step 1: Calculate similarity matrices
+
+Calculate within-species gene co-expression using **Pearson correlation + Mutual Rank** (PCC+MR) normalization. This is the best-performing method from the paper.
+
+The mutual rank transformation normalizes correlations by ranking, which reduces bias from large co-expression clusters and makes the measure more robust.
+
+```{r similarity}
+# Calculate similarity for B. distachyon (leaf)
+cat("Calculating similarity matrix for B. distachyon (leaf)...\n")
+sim_bdis <- calculate_pcc_mr(expr_bdis, method = "pcc_mr")
+
+# Calculate similarity for B. sylvaticum (leaf)
+cat("\nCalculating similarity matrix for B. sylvaticum (leaf)...\n")
+sim_bsyl <- calculate_pcc_mr(expr_bsyl, method = "pcc_mr")
+
+# Check output
+cat("\nSimilarity matrix properties:\n")
+cat("- Dimensions:", dim(sim_bdis), "\n")
+cat("- Value range:", range(sim_bdis), "\n")
+cat("- Diagonal (self-similarity):", unique(diag(sim_bdis)), "\n")
+cat("- Is symmetric:", isSymmetric(sim_bdis), "\n")
+```
+
+The PCC+MR method produces a symmetric similarity matrix with values in [0, 1], where higher values indicate stronger co-expression.
+
+## Mutual rank computation: cached vs streaming
+
+The `calculate_pcc_mr()` function uses a high-performance C++ implementation for the mutual rank transformation. Two algorithms are available via the `mr_method` parameter:
+
+### Cached method (default)
+
+The **cached** method precomputes all row ranks once, then uses them for the mutual rank computation:
+
+- **Time complexity**: O(n² log n) for ranking + O(n²) for transformation
+- **Memory usage**: O(n²) for input + O(n²) for ranks + O(n²) for output = 3 matrices
+- **Speed**: ~230x faster than streaming for typical datasets
+- **Recommended for**: Most use cases (matrices up to ~20,000 genes)
+
+```{r cached_example, eval=FALSE}
+# Default: uses cached method (fastest)
+sim <- calculate_pcc_mr(expr_matrix, mr_method = "cached")
+
+# Equivalent to:
+sim <- calculate_pcc_mr(expr_matrix)
+```
+
+### Streaming method
+
+The **streaming** method computes ranks on-demand for each gene pair, avoiding storage of intermediate rank matrices:
+
+- **Time complexity**: O(n³) due to on-demand rank computation
+- **Memory usage**: O(n²) for input + O(n²) for output + O(n) per thread
+- **Speed**: Slower, but fully parallelizable
+- **Recommended for**: Very large matrices where memory is constrained
+
+```{r streaming_example, eval=FALSE}
+# Use streaming for memory-constrained scenarios
+sim <- calculate_pcc_mr(expr_matrix, mr_method = "streaming", n_cores = 8)
+```
+
+### Performance comparison
+
+| Matrix size | Cached (1 core) | Streaming (1 core) | Streaming (8 cores) |
+|-------------|-----------------|--------------------|--------------------|
+| 1,000 genes | 0.09 sec | 21 sec | ~3 sec |
+| 5,000 genes | 2.2 sec | ~10 min | ~1.5 min |
+| 15,000 genes | ~20 sec | ~5 hours | ~40 min |
+
+**Rule of thumb**: Use `cached` (default) unless you encounter memory errors, then switch to `streaming` with multiple cores.
+
+### Checking OpenMP availability
+
+The C++ implementation uses OpenMP for parallel computation when available:
+
+```{r openmp_check}
+# Check if OpenMP is available
+cat("OpenMP available:", has_openmp(), "\n")
+cat("Maximum threads:", get_max_threads(), "\n")
+```
+
+## Step 2: Understanding ortholog types
+
+Our dataset contains different types of ortholog relationships:
+
+```{r inspect_orthologs}
+cat("Detailed ortholog type breakdown:\n")
+cat("- 1:1 (one-to-one):", sum(orthologs_all$type == "1:1"),
+    "- Most reliable for comparison\n")
+cat("- 1:N (one-to-many):", sum(orthologs_all$type == "1:N"),
+    "- Gene duplicated in B. sylvaticum\n")
+cat("- N:1 (many-to-one):", sum(orthologs_all$type == "N:1"),
+    "- Gene duplicated in B. distachyon\n")
+cat("- N:M (many-to-many):", sum(orthologs_all$type == "N:M"),
+    "- Duplicated in both species\n")
+```
+
+## Step 3: Handle multi-copy orthologs
+
+Gene duplications create analytical challenges for cross-species co-expression comparisons. The `handle_multicopy_orthologs()` function determines **which ortholog pairs to include** in the analysis:
+
+| Strategy | Description | Use case |
+|----------|-------------|----------|
+| **strict** | Retain only 1:1 orthologs | Primary analysis; matches Grønvold & Hvidsten methodology |
+| **all_pairs** | Include all N×M combinations | Studying paralog expression divergence |
+| **best_hit** | Select paralog with highest mean similarity | Exploratory analysis requiring broader gene coverage |
+| **mean** | Average CCS across all paralog combinations | Modeling sub-functionalization |
+| **max** | Retain most conserved paralog pair | Identifying conserved duplicates |
+
+```{r multicopy}
+# Apply strict strategy (1:1 orthologs only, recommended for primary analysis)
+orthologs_strict <- handle_multicopy_orthologs(orthologs_all, strategy = "strict")
+
+cat("Ortholog filtering results:\n")
+cat("  Input:", nrow(orthologs_all), "total ortholog pairs\n")
+cat("  After strict filtering:", nrow(orthologs_strict), "1:1 orthologs\n")
+cat("  Retention:", round(100 * nrow(orthologs_strict) / nrow(orthologs_all), 1), "%\n")
+```
+
+Empirical findings from the literature indicate that duplicated genes exhibit progressively lower co-expression conservation with increasing copy number (1:2 < 1:3 < 1:4), consistent with sub-functionalization following duplication. However, genes from recent whole-genome duplications (~13 Mya) show minimal divergence, and highly conserved genes are preferentially retained after duplication events.
+
+## Step 4: Calculate co-expression correlation score (CCS)
+
+The co-expression correlation score (CCS) quantifies conservation of co-expression patterns between orthologous genes. For each ortholog pair, CCS is computed as the Pearson correlation between their co-expression profiles relative to a set of reference orthologs:
+
+$$\text{CCS}_{ij} = \text{cor}(S^{sp1}_{r,i}, S^{sp2}_{r,j})$$
+
+where $r$ denotes the reference ortholog set used to construct the co-expression vectors.
+
+```{r ccs}
+# Calculate CCS using 1:1 orthologs as reference (default, recommended)
+ccs_results <- calculate_ccs(
+  sim_sp1 = sim_bdis,
+  sim_sp2 = sim_bsyl,
+  orthologs = orthologs_strict,
+  use_only_1to1 = TRUE
+)
+
+cat("CCS results summary:\n")
+cat("  Ortholog pairs evaluated:", nrow(ccs_results), "\n")
+cat("  Reference set size:", ccs_results$n_ref[1], "genes\n\n")
+
+cat("CCS distribution:\n")
+cat("  Strong conservation (CCS > 0.5):", sum(ccs_results$ccs > 0.5), "\n")
+cat("  Moderate (0 ≤ CCS ≤ 0.5):", sum(ccs_results$ccs >= 0 & ccs_results$ccs <= 0.5), "\n")
+cat("  Diverged (CCS < 0):", sum(ccs_results$ccs < 0), "\n")
+```
+
+CCS values range from -1 to 1:
+- **Positive values**: Conserved co-expression neighborhoods across species
+- **Values near zero**: No detectable conservation
+- **Negative values**: Divergent or inversely correlated co-expression patterns
+
+### Reference set selection for CCS computation
+
+The `use_only_1to1` parameter determines which orthologs comprise the **reference set** for CCS calculation. This methodological choice affects both the statistical properties and biological interpretation of results.
+
+When `use_only_1to1 = TRUE` (default), only 1:1 orthologs serve as reference genes. This approach produces cleaner signals because 1:1 orthologs more likely retain ancestral function and expression patterns, and matches the original methodology. However, it yields smaller reference sets that may limit statistical power.
+
+When `use_only_1to1 = FALSE`, all orthologs (including 1:N, N:1, and N:M relationships) contribute to the reference set. This increases reference set size and statistical power, which is particularly important for polyploid species or de novo transcriptomes where few 1:1 orthologs exist. The trade-off is increased noise from sub-functionalized paralogs with divergent expression.
+
+| Scenario | Recommended setting |
+|----------|-------------------|
+| Primary analysis (matches literature) | `use_only_1to1 = TRUE` |
+| Well-annotated reference genomes | `use_only_1to1 = TRUE` |
+| Polyploid or post-WGD species comparisons | `use_only_1to1 = FALSE` |
+| De novo transcriptomes | `use_only_1to1 = FALSE` |
+| Fewer than 500 1:1 orthologs available | `use_only_1to1 = FALSE` |
+
+### Empirical comparison of reference set choices
+
+To assess sensitivity of CCS to reference set composition, we compute CCS for all ortholog pairs using both reference sets:
+
+```{r compare_reference_sets, fig.width=10, fig.height=5}
+# Compute CCS with 1:1-only reference
+ccs_1to1_ref <- calculate_ccs(sim_bdis, sim_bsyl, orthologs_all, use_only_1to1 = TRUE)
+
+# Compute CCS with all-ortholog reference
+ccs_all_ref <- calculate_ccs(sim_bdis, sim_bsyl, orthologs_all, use_only_1to1 = FALSE)
+
+# Combine results for comparison
+comparison_df <- data.frame(
+  gene_sp1 = ccs_1to1_ref$gene_sp1,
+  gene_sp2 = ccs_1to1_ref$gene_sp2,
+  ccs_1to1 = ccs_1to1_ref$ccs,
+  ccs_all = ccs_all_ref$ccs,
+  n_ref_1to1 = ccs_1to1_ref$n_ref[1],
+  n_ref_all = ccs_all_ref$n_ref[1]
+)
+
+# Quantify divergence between methods
+comparison_df$ccs_diff <- comparison_df$ccs_all - comparison_df$ccs_1to1
+diff_threshold <- 0.15
+
+comparison_df$divergence <- case_when(
+  comparison_df$ccs_diff > diff_threshold ~ "Higher with all orthologs",
+  comparison_df$ccs_diff < -diff_threshold ~ "Higher with 1:1 only",
+  TRUE ~ "Concordant"
+)
+comparison_df$divergence <- factor(
+  comparison_df$divergence,
+  levels = c("Concordant", "Higher with all orthologs", "Higher with 1:1 only")
+)
+
+cat("Reference set comparison:\n")
+cat("  1:1 orthologs only:", comparison_df$n_ref_1to1[1], "reference genes\n")
+cat("  All orthologs:", comparison_df$n_ref_all[1], "reference genes\n")
+cat("  Pearson correlation between CCS values:", round(cor(comparison_df$ccs_1to1, comparison_df$ccs_all), 3), "\n\n")
+
+cat("Concordance (|ΔCCS| ≤", diff_threshold, "):\n")
+print(table(comparison_df$divergence))
+```
+
+```{r reference_comparison_plots, fig.width=12, fig.height=5}
+library(gridExtra)
+
+# Scatterplot comparing CCS values
+p1 <- ggplot(comparison_df, aes(x = ccs_1to1, y = ccs_all, color = divergence)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  scale_color_manual(
+    values = c("Concordant" = "gray60",
+               "Higher with all orthologs" = "darkgreen",
+               "Higher with 1:1 only" = "darkorange"),
+    name = "Reference set effect"
+  ) +
+  labs(
+    title = "CCS sensitivity to reference set composition",
+    subtitle = sprintf("r = %.3f | %d ortholog pairs show |ΔCCS| > %.2f",
+                      cor(comparison_df$ccs_1to1, comparison_df$ccs_all),
+                      sum(comparison_df$divergence != "Concordant"),
+                      diff_threshold),
+    x = "CCS (1:1 orthologs as reference)",
+    y = "CCS (all orthologs as reference)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  coord_fixed(xlim = c(-0.5, 1), ylim = c(-0.5, 1))
+
+# Distribution of CCS differences
+p2 <- ggplot(comparison_df, aes(x = ccs_diff, fill = divergence)) +
+  geom_histogram(bins = 40, alpha = 0.8, color = "white") +
+  geom_vline(xintercept = c(-diff_threshold, diff_threshold),
+             linetype = "dashed", color = "red", linewidth = 0.8) +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray40") +
+  scale_fill_manual(
+    values = c("Concordant" = "gray60",
+               "Higher with all orthologs" = "darkgreen",
+               "Higher with 1:1 only" = "darkorange"),
+    name = "Reference set effect"
+  ) +
+  labs(
+    title = "Distribution of CCS differences",
+    subtitle = sprintf("Mean ΔCCS = %.3f", mean(comparison_df$ccs_diff)),
+    x = "ΔCCS (all orthologs − 1:1 only)",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+```{r divergent_genes_table}
+# Identify orthologs most sensitive to reference set choice
+divergent_genes <- comparison_df[abs(comparison_df$ccs_diff) > diff_threshold, ]
+divergent_genes <- divergent_genes[order(-abs(divergent_genes$ccs_diff)), ]
+
+if (nrow(divergent_genes) > 0) {
+  cat("Ortholog pairs most affected by reference set choice:\n\n")
+  print(head(divergent_genes[, c("gene_sp1", "gene_sp2", "ccs_1to1", "ccs_all",
+                                  "ccs_diff", "divergence")], 10))
+}
+```
+
+The comparison reveals three classes of ortholog pairs:
+
+- **Concordant** (gray): CCS values are robust to reference set choice. These orthologs show consistent conservation signals regardless of methodology.
+
+- **Higher with expanded reference** (green): CCS increases when multi-copy orthologs are included. This occurs when the focal gene's co-expression partners include multi-copy orthologs with conserved expression patterns, amplifying the correlation signal.
+
+- **Higher with 1:1 reference** (orange): CCS decreases when multi-copy orthologs are included. This indicates that sub-functionalized paralogs in the expanded reference introduce noise that obscures the conservation signal.
+
+The mean ΔCCS indicates systematic bias: positive values suggest the expanded reference inflates CCS estimates, while negative values indicate attenuation. For robust biological conclusions, orthologs showing strong conservation under both reference sets represent the most reliable candidates for functionally conserved co-expression.
+
+## Step 5: Calculate ortholog rank score (ORS)
+
+The ortholog rank score (ORS) transforms CCS values into a percentile-based measure that facilitates statistical interpretation. For each ortholog pair, ORS represents the proportion of all pairs with equal or lower CCS:
+
+$$\text{ORS}_{ij} = \frac{\text{rank}(\text{CCS}_{ij})}{N}$$
+
+where $N$ is the total number of ortholog pairs. ORS ranges from 0 to 1, with higher values indicating stronger relative conservation.
+
+The log-transformed ORS provides a more interpretable scale:
+
+$$\log\text{ORS}_{ij} = -\log_{10}(1 + \epsilon - \text{ORS}_{ij})$$
+
+where $\epsilon = 10^{-4}$ ensures numerical stability. This transformation maps ORS percentiles to an intuitive logarithmic scale:
+
+| logORS | Percentile | Interpretation |
+|--------|------------|----------------|
+| > 3 | Top 0.1% | Extremely conserved |
+| > 2 | Top 1% | Highly conserved |
+| > 1 | Top 10% | Conserved |
+| 0 | ~50% | Median conservation |
+| < 0 | Bottom 50% | Below-average conservation |
+
+```{r ors}
+# Calculate ORS with log transformation
+ors_results <- calculate_ors(ccs_results, return_log = TRUE)
+
+cat("ORS results summary:\n")
+cat("  Ortholog pairs:", nrow(ors_results), "\n\n")
+
+cat("logORS distribution:\n")
+cat("  Min:", round(min(ors_results$logors), 2), "\n")
+cat("  Median:", round(median(ors_results$logors), 2), "\n")
+cat("  Max:", round(max(ors_results$logors), 2), "\n")
+```
+
+```{r ors_significance}
+# Test significance
+ors_results <- test_ors_significance(ors_results, alpha = 0.05)
+
+cat("\nSignificance summary:\n")
+cat("Significant orthologs:", sum(ors_results$significant), "/",
+    nrow(ors_results), "\n")
+cat("Percentage significant:",
+    round(100 * sum(ors_results$significant) / nrow(ors_results), 1), "%\n")
+```
+
+## Step 6: Visualize results
+
+### Distribution of expression conservation
+
+```{r plot_logors, fig.cap="Distribution of expression conservation (logORS)", fig.width=8}
+ggplot(ors_results, aes(x = logors)) +
+  geom_histogram(bins = 50, fill = "steelblue", alpha = 0.8, color = "white") +
+  geom_vline(xintercept = c(1, 2, 3), linetype = "dashed", color = "red", linewidth = 1) +
+  labs(
+    title = expression(paste("Expression conservation in ", italic("Brachypodium"), " orthologs (leaf tissue)")),
+    x = "logORS (log ortholog rank score)",
+    y = "Count",
+    subtitle = "Red lines: top 10%, 1%, and 0.1% thresholds"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+```
+
+### CCS vs ORS relationship
+
+```{r plot_ccs_ors, fig.cap="Relationship between CCS and ORS", fig.width=8, fig.height=6}
+# Add conservation category
+ors_results$conservation <- cut(
+  ors_results$logors,
+  breaks = c(-Inf, 0, 1, 2, 3, Inf),
+  labels = c("Diverged", "Moderate", "Conserved (top 10%)",
+             "Highly conserved (top 1%)", "Extremely conserved (top 0.1%)")
+)
+
+ggplot(ors_results, aes(x = ccs, y = logors, color = conservation)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_hline(yintercept = c(0, 1, 2, 3), linetype = "dashed", alpha = 0.3) +
+  scale_color_manual(
+    values = c("Diverged" = "gray60",
+               "Moderate" = "steelblue",
+               "Conserved (top 10%)" = "orange",
+               "Highly conserved (top 1%)" = "red",
+               "Extremely conserved (top 0.1%)" = "darkred")
+  ) +
+  labs(
+    title = expression(paste("Co-expression conservation between ", italic("B. distachyon"), " and ", italic("B. sylvaticum"))),
+    x = "Co-expression correlation score (CCS)",
+    y = "logORS (ortholog rank score)",
+    color = "Conservation level",
+    subtitle = "Leaf tissue RNA-seq data"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 13, face = "bold")
+  )
+```
+
+## Step 7: Identify highly conserved genes
+
+```{r conserved_genes}
+# Filter for highly conserved orthologs (top 1%)
+highly_conserved <- ors_results[ors_results$logors > 2, ]
+
+cat("Highly conserved orthologs (top 1%):\n")
+cat("Count:", nrow(highly_conserved), "\n")
+cat("Percentage:", round(100 * nrow(highly_conserved) / nrow(ors_results), 1), "%\n\n")
+
+if (nrow(highly_conserved) > 0) {
+  cat("Top 10 most conserved orthologs:\n")
+  top_conserved <- highly_conserved[order(-highly_conserved$logors), ]
+  print(head(top_conserved[, c("gene_sp1", "gene_sp2", "ccs", "logors")], 10))
+}
+```
+
+## Step 8: Visualize network overlap for conserved genes
+
+A key insight from co-expression conservation is that highly conserved orthologs tend to share similar co-expression *neighborhoods* — i.e., their top co-expression partners are also orthologous. Let's visualize this for the most conserved genes.
+
+### Co-expression neighborhood overlap
+
+For each highly conserved ortholog pair, we can examine how many of their top co-expression partners are themselves orthologs:
+
+```{r neighborhood_overlap, fig.width=8, fig.height=6}
+# Get top conserved orthologs (top 5%)
+top_threshold <- quantile(ors_results$logors, 0.95)
+top_conserved <- ors_results[ors_results$logors >= top_threshold, ]
+
+# For each ortholog pair, calculate neighborhood overlap
+# (what fraction of top-k neighbors in sp1 have orthologs in top-k neighbors of sp2)
+calculate_neighborhood_jaccard <- function(gene1, gene2, sim1, sim2, orthologs, k = 20) {
+  # Get top-k neighbors for each gene
+  if (!(gene1 %in% rownames(sim1)) || !(gene2 %in% rownames(sim2))) {
+    return(NA)
+  }
+
+  neighbors1 <- names(sort(sim1[gene1, ], decreasing = TRUE)[2:(k + 1)])
+  neighbors2 <- names(sort(sim2[gene2, ], decreasing = TRUE)[2:(k + 1)])
+
+  # Map neighbors through orthology
+  ortho_map <- setNames(orthologs$gene_sp2, orthologs$gene_sp1)
+  neighbors1_mapped <- na.omit(ortho_map[neighbors1])
+
+  # Calculate Jaccard index
+  intersection <- length(intersect(neighbors1_mapped, neighbors2))
+  union_size <- length(union(neighbors1_mapped, neighbors2))
+
+  if (union_size == 0) return(0)
+  return(intersection / union_size)
+}
+
+# Calculate for top conserved vs random sample
+set.seed(123)
+random_sample <- ors_results[sample(nrow(ors_results), min(nrow(top_conserved), 50)), ]
+
+jaccard_top <- sapply(seq_len(min(50, nrow(top_conserved))), function(i) {
+  calculate_neighborhood_jaccard(
+    top_conserved$gene_sp1[i], top_conserved$gene_sp2[i],
+    sim_bdis, sim_bsyl, orthologs_strict, k = 15
+  )
+})
+
+jaccard_random <- sapply(seq_len(nrow(random_sample)), function(i) {
+  calculate_neighborhood_jaccard(
+    random_sample$gene_sp1[i], random_sample$gene_sp2[i],
+    sim_bdis, sim_bsyl, orthologs_strict, k = 15
+  )
+})
+
+# Create comparison data frame
+neighborhood_df <- data.frame(
+  jaccard = c(jaccard_top, jaccard_random),
+  group = factor(
+    rep(c("Top 5% conserved", "Random sample"), c(length(jaccard_top), length(jaccard_random))),
+    levels = c("Top 5% conserved", "Random sample")
+  )
+)
+
+ggplot(neighborhood_df, aes(x = group, y = jaccard, fill = group)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  scale_fill_manual(values = c("Top 5% conserved" = "darkred", "Random sample" = "steelblue")) +
+  labs(
+    title = "Co-expression neighborhood conservation",
+    subtitle = expression(paste("Jaccard similarity of top-15 neighbors between ", italic("B. distachyon"), " and ", italic("B. sylvaticum"))),
+    x = "",
+    y = "Neighborhood Jaccard index"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"))
+```
+
+**Interpretation**: Highly conserved orthologs (high logORS) tend to have higher neighborhood Jaccard indices, meaning their co-expression partners are more likely to be orthologous pairs themselves. This reflects conservation of entire regulatory modules, not just individual gene pairs.
+
+> **Why can some highly conserved genes have Jaccard = 0?**
+>
+> You may notice that some genes in the "Top 5% conserved" group have a Jaccard index of 0. This is not a contradiction — **CCS/ORS and Jaccard measure different aspects of conservation**:
+>
+> - **CCS (Co-expression Correlation Score)** measures whether the *relative pattern* of co-expression strengths is preserved across all reference orthologs. If gene A has similarity values [0.8, 0.6, 0.4, 0.3, ...] with reference genes, and its ortholog A' has [0.7, 0.5, 0.35, 0.25, ...], CCS is high because the ranking and relative magnitudes are similar.
+>
+> - **Jaccard index** measures the *overlap of top-k neighbors only*. If A's top 15 neighbors are {X, Y, Z, ...} and A's ortholog's top 15 are {P, Q, R, ...} with no overlap, Jaccard = 0.
+>
+> This happens when similarity values are relatively uniform across many genes. Small perturbations in co-expression strength can change which genes make the "top-k" cutoff, even when the overall correlation pattern is preserved. Biologically, this suggests the gene maintains *similar co-expression strength* with orthologs (high CCS), but the specific top partners may have diverged or been replaced by species-specific paralogs.
+
+### Heatmap of co-expression similarity for top conserved orthologs
+
+Let's visualize the similarity patterns among the most conserved orthologs in both species:
+
+```{r heatmap_conserved, fig.width=10, fig.height=8}
+# Select top 25 most conserved orthologs
+n_top <- min(25, nrow(top_conserved))
+top_genes <- top_conserved[order(-top_conserved$logors)[1:n_top], ]
+
+# Extract similarity submatrices
+genes_sp1 <- top_genes$gene_sp1[top_genes$gene_sp1 %in% rownames(sim_bdis)]
+genes_sp2 <- top_genes$gene_sp2[top_genes$gene_sp2 %in% rownames(sim_bsyl)]
+
+# Use only genes present in both
+n_common <- min(length(genes_sp1), length(genes_sp2), 20)
+genes_sp1 <- genes_sp1[1:n_common]
+genes_sp2 <- genes_sp2[1:n_common]
+
+sim_sub_bdis <- sim_bdis[genes_sp1, genes_sp1]
+sim_sub_bsyl <- sim_bsyl[genes_sp2, genes_sp2]
+
+# Create combined heatmap data
+library(tidyr)
+
+heatmap_data_bdis <- as.data.frame(sim_sub_bdis)
+heatmap_data_bdis$gene1 <- rownames(heatmap_data_bdis)
+heatmap_data_bdis <- pivot_longer(
+  heatmap_data_bdis,
+  cols = -gene1,
+  names_to = "gene2",
+  values_to = "similarity"
+)
+heatmap_data_bdis$species <- "B. distachyon"
+
+heatmap_data_bsyl <- as.data.frame(sim_sub_bsyl)
+heatmap_data_bsyl$gene1 <- rownames(heatmap_data_bsyl)
+heatmap_data_bsyl <- pivot_longer(
+  heatmap_data_bsyl,
+  cols = -gene1,
+  names_to = "gene2",
+  values_to = "similarity"
+)
+heatmap_data_bsyl$species <- "B. sylvaticum"
+
+# Combined plot
+heatmap_combined <- rbind(heatmap_data_bdis, heatmap_data_bsyl)
+
+ggplot(heatmap_combined, aes(x = gene1, y = gene2, fill = similarity)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "white", mid = "steelblue", high = "darkred",
+    midpoint = 0.5, limits = c(0, 1),
+    name = "PCC+MR\nsimilarity"
+  ) +
+  facet_wrap(~species, scales = "free") +
+  labs(
+    title = "Co-expression similarity among top conserved orthologs",
+    subtitle = "Similar block patterns indicate conserved co-expression modules",
+    x = "", y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 6),
+    axis.text.y = element_text(size = 6),
+    plot.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(face = "italic")
+  )
+```
+
+### Conservation score distribution by percentile
+
+```{r percentile_distribution, fig.width=8, fig.height=5}
+# Create percentile bins
+ors_results$percentile <- cut(
+  rank(ors_results$logors) / nrow(ors_results) * 100,
+  breaks = c(0, 10, 25, 50, 75, 90, 95, 99, 100),
+  labels = c("0-10%", "10-25%", "25-50%", "50-75%", "75-90%", "90-95%", "95-99%", "99-100%"),
+  include.lowest = TRUE
+)
+
+# Summary table
+percentile_summary <- aggregate(
+  cbind(ccs, logors) ~ percentile,
+  data = ors_results,
+  FUN = function(x) c(median = median(x), n = length(x))
+)
+
+cat("\nConservation summary by percentile:\n")
+print(percentile_summary)
+
+# Cumulative distribution
+ggplot(ors_results, aes(x = logors)) +
+  stat_ecdf(geom = "line", color = "steelblue", linewidth = 1.2) +
+  geom_vline(xintercept = c(1, 2, 3), linetype = "dashed", color = "red", alpha = 0.6) +
+  annotate("text", x = 1.1, y = 0.15, label = "Top 10%", hjust = 0, color = "red") +
+  annotate("text", x = 2.1, y = 0.08, label = "Top 1%", hjust = 0, color = "red") +
+  annotate("text", x = 3.1, y = 0.02, label = "Top 0.1%", hjust = 0, color = "red") +
+  labs(
+    title = "Cumulative distribution of expression conservation",
+    subtitle = expression(paste(italic("Brachypodium"), " leaf tissue orthologs")),
+    x = "logORS (ortholog rank score)",
+    y = "Cumulative proportion"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+```
+
+### Annual vs perennial expression profiles
+
+Using ComplexHeatmap, we can visualize temporal expression patterns for ortholog pairs ranked by conservation. This reveals how expression dynamics differ between the annual (*B. distachyon*) and perennial (*B. sylvaticum*) species.
+
+```{r temporal_heatmap, fig.width=12, fig.height=10, message=FALSE}
+# Check if ComplexHeatmap is available
+if (requireNamespace("ComplexHeatmap", quietly = TRUE) &&
+    requireNamespace("circlize", quietly = TRUE) &&
+    requireNamespace("grid", quietly = TRUE)) {
+
+  library(ComplexHeatmap)
+  library(circlize)
+  library(grid)
+
+  # Load temporal expression data
+  temporal_path <- system.file("extdata", "temporal_bdis_small.rds",
+                               package = "coexpr", mustWork = FALSE)
+
+  if (file.exists(temporal_path)) {
+    temporal_bdis <- readRDS(system.file("extdata", "temporal_bdis_small.rds",
+                                          package = "coexpr"))
+    temporal_bsyl <- readRDS(system.file("extdata", "temporal_bsyl_small.rds",
+                                          package = "coexpr"))
+  } else if (file.exists("../inst/extdata/temporal_bdis_small.rds")) {
+    temporal_bdis <- readRDS("../inst/extdata/temporal_bdis_small.rds")
+    temporal_bsyl <- readRDS("../inst/extdata/temporal_bsyl_small.rds")
+  } else if (file.exists("../data-raw/temporal_bdis_small.rds")) {
+    temporal_bdis <- readRDS("../data-raw/temporal_bdis_small.rds")
+    temporal_bsyl <- readRDS("../data-raw/temporal_bsyl_small.rds")
+  } else {
+    temporal_bdis <- NULL
+    temporal_bsyl <- NULL
+  }
+
+  if (!is.null(temporal_bdis) && !is.null(temporal_bsyl)) {
+
+    # Select top 50 conserved 1:1 ortholog pairs
+    ors_1to1 <- ors_results[ors_results$type == "1:1", ]
+    top_pairs <- ors_1to1[order(-ors_1to1$logors), ][1:min(50, nrow(ors_1to1)), ]
+
+    # Filter to genes present in temporal data
+    top_pairs <- top_pairs[
+      top_pairs$gene_sp1 %in% rownames(temporal_bdis) &
+      top_pairs$gene_sp2 %in% rownames(temporal_bsyl),
+    ]
+
+    n_pairs <- min(40, nrow(top_pairs))
+    top_pairs <- top_pairs[1:n_pairs, ]
+
+    # Extract temporal profiles
+    expr_annual <- temporal_bdis[top_pairs$gene_sp1, , drop = FALSE]
+    expr_perennial <- temporal_bsyl[top_pairs$gene_sp2, , drop = FALSE]
+
+    # Interpolate to 50-point smooth grid
+    days_original <- as.numeric(colnames(expr_annual))
+    smooth_grid <- seq(min(days_original), max(days_original), length.out = 50)
+
+    interpolate_profile <- function(expr_row, days, n_points = 50) {
+      new_days <- seq(min(days), max(days), length.out = n_points)
+      smooth_fit <- smooth.spline(days, as.numeric(expr_row), spar = 0.5)
+      predict(smooth_fit, new_days)$y
+    }
+
+    # Apply interpolation to all genes
+    expr_annual_smooth <- t(apply(expr_annual, 1, function(row) {
+      interpolate_profile(row, days_original, 50)
+    }))
+    colnames(expr_annual_smooth) <- round(smooth_grid, 1)
+
+    expr_perennial_smooth <- t(apply(expr_perennial, 1, function(row) {
+      interpolate_profile(row, days_original, 50)
+    }))
+    colnames(expr_perennial_smooth) <- round(smooth_grid, 1)
+
+    # Z-score normalize each gene (row), handling edge cases
+    scale_rows <- function(mat) {
+      scaled <- t(scale(t(mat)))
+      # Replace NA/Inf with 0 (genes with zero variance)
+      scaled[!is.finite(scaled)] <- 0
+      # Cap extreme values
+      scaled[scaled > 3] <- 3
+      scaled[scaled < -3] <- -3
+      return(scaled)
+    }
+
+    expr_annual_scaled <- scale_rows(expr_annual_smooth)
+    expr_perennial_scaled <- scale_rows(expr_perennial_smooth)
+
+    # Ensure no NA values
+    expr_annual_scaled[is.na(expr_annual_scaled)] <- 0
+    expr_perennial_scaled[is.na(expr_perennial_scaled)] <- 0
+
+    # Compute Euclidean distance on z-scored data for row clustering
+    # Use combined expression from both species for clustering
+    combined_expr <- cbind(expr_annual_scaled, expr_perennial_scaled)
+    row_dist <- dist(combined_expr, method = "euclidean")
+    row_clust <- hclust(row_dist, method = "ward.D2")
+
+    # Create right-side annotation for logORS
+    row_anno_right <- rowAnnotation(
+      logORS = anno_barplot(
+        top_pairs$logors,
+        bar_width = 0.8,
+        gp = gpar(fill = "steelblue", col = "steelblue"),
+        width = unit(1.5, "cm")
+      ),
+      annotation_name_rot = 0
+    )
+
+    # Color scale for expression
+    col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+
+    # Create bottom annotation for time axis (50 labels, only show key ones)
+    day_labels <- rep("", 50)
+    day_labels[1] <- "7"
+    day_labels[25] <- "32"
+    day_labels[50] <- "57"
+
+    bottom_anno <- HeatmapAnnotation(
+      days = anno_text(day_labels, rot = 0, gp = gpar(fontsize = 8)),
+      annotation_name_side = "left",
+      annotation_label = "Day"
+    )
+
+    # Create heatmaps with correlation-based row clustering
+    ht_annual <- Heatmap(
+      expr_annual_scaled,
+      name = "Z-score",
+      col = col_fun,
+      cluster_rows = row_clust,
+      cluster_columns = FALSE,
+      show_row_names = FALSE,
+      show_column_names = FALSE,
+      column_title = expression(paste(italic("B. distachyon"), " (annual)")),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold"),
+      row_title = "Ortholog pairs\n(Ward's clustering)",
+      row_title_gp = gpar(fontsize = 10),
+      heatmap_legend_param = list(
+        title = "Expression\n(Z-score)",
+        legend_height = unit(3, "cm")
+      ),
+      width = unit(6, "cm"),
+      bottom_annotation = bottom_anno
+    )
+
+    ht_perennial <- Heatmap(
+      expr_perennial_scaled,
+      name = "Z-score2",
+      col = col_fun,
+      cluster_rows = row_clust,
+      cluster_columns = FALSE,
+      show_row_names = FALSE,
+      show_column_names = FALSE,
+      column_title = expression(paste(italic("B. sylvaticum"), " (perennial)")),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold"),
+      show_heatmap_legend = FALSE,
+      width = unit(6, "cm"),
+      bottom_annotation = bottom_anno
+    )
+
+    # Draw combined heatmap with logORS annotation on the right
+    draw(
+      ht_annual + ht_perennial + row_anno_right,
+      column_title = "Temporal expression profiles of conserved orthologs (leaf tissue)",
+      column_title_gp = gpar(fontsize = 14, fontface = "bold"),
+      heatmap_legend_side = "right",
+      annotation_legend_side = "right"
+    )
+
+    cat("\nHeatmap shows top", n_pairs, "conserved 1:1 orthologs\n")
+    cat("Rows clustered by Euclidean distance + Ward's method (z-scored profiles)\n")
+
+  } else {
+    cat("Temporal expression data not found. Skipping heatmap.\n")
+  }
+} else {
+  cat("ComplexHeatmap not installed. Install with:\n")
+  cat('  BiocManager::install("ComplexHeatmap")\n')
+}
+```
+**Interpretation**: The heatmap shows temporal expression patterns for the most conserved ortholog pairs. Each row represents an ortholog pair, with the annual species (*B. distachyon*) on the left and the perennial species (*B. sylvaticum*) on the right. Rows are clustered using Ward's method on Euclidean distances of z-scored expression, grouping genes with similar developmental dynamics into compact clusters. The logORS barplot on the right shows conservation scores. Similar expression patterns across the two heatmaps indicate conserved developmental regulation between the annual and perennial life cycle strategies.
+
+## Advanced: Impact of multi-copy orthologs
+
+Let's analyze how including multi-copy orthologs affects conservation scores:
+
+```{r analyze_multicopy, fig.width=8, fig.height=5}
+# Run analysis with "all_pairs" strategy to include multi-copy
+orthologs_all_pairs <- handle_multicopy_orthologs(
+  orthologs_all,
+  strategy = "all_pairs"
+)
+
+# Calculate CCS and ORS for all pairs
+ccs_all <- calculate_ccs(sim_bdis, sim_bsyl, orthologs_all_pairs, use_only_1to1 = TRUE)
+ors_all <- calculate_ors(ccs_all)
+
+# Compare conservation by ortholog type
+cat("\nConservation summary by ortholog type:\n")
+summary_by_type <- summarize_conservation(ors_all, by_type = TRUE)
+print(summary_by_type)
+
+# Visualize differences
+ggplot(ors_all, aes(x = type, y = logors, fill = type)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  geom_hline(yintercept = c(1, 2), linetype = "dashed", color = "red", alpha = 0.5) +
+  scale_fill_manual(values = c("1:1" = "steelblue", "1:N" = "orange",
+                                 "N:1" = "darkgreen", "N:M" = "purple")) +
+  labs(
+    title = expression(paste("Expression conservation by ortholog type in ", italic("Brachypodium"), " (leaf)")),
+    x = "Ortholog type",
+    y = "logORS",
+    subtitle = "1:1 orthologs show higher conservation than duplicated genes"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+**Key observations:**
+- 1:1 orthologs typically have higher median logORS
+- Multi-copy orthologs (1:N, N:1, N:M) show more diverged expression
+- This is consistent with sub-functionalization after gene duplication
+
+### Example: best hit strategy
+
+For exploratory analysis, you might want more gene coverage:
+
+```{r best_hit_example}
+# Use best_hit strategy (requires similarity matrices)
+orthologs_best_hit <- handle_multicopy_orthologs(
+  orthologs_all,
+  strategy = "best_hit",
+  similarity_sp1 = sim_bdis,
+  similarity_sp2 = sim_bsyl
+)
+
+cat("\nBest hit strategy results:\n")
+cat("- Original orthologs:", nrow(orthologs_all), "\n")
+cat("- Strict (1:1 only):", nrow(orthologs_strict), "\n")
+cat("- After best_hit:", nrow(orthologs_best_hit), "\n")
+cat("- Gain:", nrow(orthologs_best_hit) - nrow(orthologs_strict), "additional genes\n")
+
+# Calculate CCS for best hit orthologs
+ccs_best_hit <- calculate_ccs(sim_bdis, sim_bsyl, orthologs_best_hit)
+ors_best_hit <- calculate_ors(ccs_best_hit)
+
+cat("\nConservation comparison:\n")
+cat("Strict (1:1 only) - Median logORS:",
+    round(median(ors_results$logors), 3), "\n")
+cat("Best hit strategy - Median logORS:",
+    round(median(ors_best_hit$logors), 3), "\n")
+```
+
+## Summary workflow
+
+Here's the complete workflow in a nutshell:
+
+```{r summary_workflow, eval=FALSE}
+# 1. Calculate similarity matrices (uses C++ cached method by default)
+sim_sp1 <- calculate_pcc_mr(expr_sp1)
+sim_sp2 <- calculate_pcc_mr(expr_sp2)
+
+# For very large matrices, use streaming method with parallel processing:
+# sim_sp1 <- calculate_pcc_mr(expr_sp1, mr_method = "streaming", n_cores = 8)
+
+# 2. Process orthologs (strict = only 1:1)
+orthologs <- handle_multicopy_orthologs(orthologs_raw, strategy = "strict")
+
+# 3. Calculate CCS
+ccs_results <- calculate_ccs(sim_sp1, sim_sp2, orthologs)
+
+# 4. Calculate ORS
+ors_results <- calculate_ors(ccs_results)
+
+# 5. Test significance
+ors_results <- test_ors_significance(ors_results, alpha = 0.05)
+
+# 6. Identify conserved genes
+conserved <- ors_results[ors_results$logors > 2, ]
+```
+
+## Biological interpretation
+
+The results from this *Brachypodium* leaf tissue analysis reveal:
+
+1. **Overall conservation**: The distribution of logORS values shows that many orthologs maintain similar co-expression patterns despite ~35-40 million years of divergence.
+
+2. **Multi-copy effects**: Duplicated genes (1:N, N:1, N:M) show lower conservation than 1:1 orthologs, supporting the sub-functionalization hypothesis.
+
+3. **Annual vs perennial**: *B. distachyon* (annual) and *B. sylvaticum* (perennial) have different life cycle strategies, yet their gene regulation shows substantial conservation in core pathways.
+
+4. **Tissue-specific analysis**: By focusing on leaf tissue, we capture photosynthesis-related and leaf development genes that may show different conservation patterns compared to root tissue.
+
+## References
+
+- Grønvold L, Hvidsten TR. Cross species comparative transcriptomics using co-expression networks.
+- Obayashi T, Kinoshita K (2009). Rank of correlation coefficient as a comparable measure for biological significance of gene coexpression. DNA Research 16:249-260.
+- Ohno S (1970). Evolution by Gene Duplication.
+
+**Data source**: OrthoFinder orthology analysis and DESeq2 VST-transformed expression data from *Brachypodium* leaf RNA-seq experiments.
+
+## Session info
+
+```{r session_info}
+sessionInfo()
+```

@@ -1,0 +1,23 @@
+# Makevars for Unix/Linux/macOS
+# Enable C++17 and OpenMP for parallel mutual rank computation
+
+CXX_STD = CXX17
+PKG_CXXFLAGS = -DARMA_USE_CURRENT
+
+# On macOS with Homebrew, we need to:
+# 1. Link against Homebrew's libomp (which has newer symbols)
+# 2. Use -install_name to ensure the correct library is loaded at runtime
+#    (R has an older bundled libomp that lacks newer symbols like ___kmpc_dispatch_deinit)
+ifeq ($(shell uname -s),Darwin)
+    LIBOMP_PATH = /opt/homebrew/opt/libomp
+    LIBOMP_CHECK := $(wildcard $(LIBOMP_PATH)/lib/libomp.dylib)
+    ifneq ($(LIBOMP_CHECK),)
+        PKG_CXXFLAGS += -fopenmp -I$(LIBOMP_PATH)/include
+        # Use -rpath and explicit path to override R's bundled libomp
+        PKG_LIBS = -L$(LIBOMP_PATH)/lib -Wl,-rpath,$(LIBOMP_PATH)/lib $(LIBOMP_PATH)/lib/libomp.dylib
+    endif
+else
+    # Linux - use standard OpenMP flags from R
+    PKG_CXXFLAGS += $(SHLIB_OPENMP_CXXFLAGS)
+    PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
+endif

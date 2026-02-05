@@ -1,0 +1,9 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^data-raw$
+^\.claude$
+^CLAUDE\.md$
+^ARCHITECTURE\.md$
+^cross-species-co-expression-networks\.pdf$
+^doc$
+^Meta$

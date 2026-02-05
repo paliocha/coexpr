@@ -1,0 +1,28 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+/doc/
+/Meta/
+
+# OS files
+.DS_Store
+
+# Compiled code
+src/*.o
+src/*.so
+src/*.dll
+
+# Environment (may contain secrets)
+.Renviron
+
+# Generated example output
+inst/examples/output/
+.Rapp.history
+
+# Large raw data (keep only _small versions in inst/extdata)
+data-raw/*.rds
+
+# Generated vignette output
+vignettes/*.html

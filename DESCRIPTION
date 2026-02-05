@@ -1,0 +1,39 @@
+Package: coexpr
+Title: Cross-Species Co-Expression Network Analysis
+Version: 0.1.0
+Authors@R:
+    person("Martin", "Paliocha", , "martin.paliocha@nmbu.no", role = c("aut", "cre"))
+Description: Implementation of cross-species comparative transcriptomics using
+    co-expression networks based on Grønvold & Hvidsten. Calculates co-expression
+    correlation scores (CCS) and ortholog rank scores (ORS) to identify conserved
+    gene regulation patterns across species without requiring directly comparable samples.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.1.0)
+Imports:
+    dplyr (>= 1.1.0),
+    future,
+    furrr,
+    Rcpp,
+    Rfast,
+    rlang
+LinkingTo:
+    Rcpp,
+    RcppArmadillo
+SystemRequirements: GNU make, C++17
+Suggests:
+    testthat (>= 3.0.0),
+    ggplot2,
+    gridExtra,
+    tidyr,
+    ComplexHeatmap,
+    circlize,
+    grid,
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+LazyData: true
+VignetteBuilder: knitr
