@@ -1,4 +1,4 @@
-# coexpr: Cross-Species Co-Expression Network Analysis
+# Cross-species co-expression network analysis in R
 
 R package implementing the methodology from **Grønvold & Hvidsten**: *Cross species comparative transcriptomics using co-expression networks*.
 
