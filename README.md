@@ -1,6 +1,7 @@
 # Cross-species co-expression network analysis in R
 
-R package implementing the methodology from **Grønvold & Hvidsten**: *Cross species comparative transcriptomics using co-expression networks*.
+R package implementing the methodology from **Grønvold & Hvidsten (2017)**:
+*Cross species comparative transcriptomics using co-expression networks*.
 
 ## Overview
 
@@ -206,14 +207,14 @@ ors <- rank(ccs) / length(ccs)
 
 If you use this package, please cite the original paper:
 
-> Grønvold L, Hvidsten TR. Cross species comparative transcriptomics using co-expression networks. hdl:11250/2712242
+> Grønvold L, Hvidsten TR. Cross species comparative transcriptomics using co-expression networks. [hdl:11250/2712242](http://hdl.handle.net/11250/2712242)
 
 ## References
 
 **Key papers**:
 - Ohno S (1970) Evolution by Gene Duplication
-- Obayashi T, Kinoshita K (2009) Rank of correlation coefficient. DNA Research 16:249-260
-- Tirosh I, Barkai N (2007) Comparative analysis indicates regulatory neofunctionalization. Genome Biology 8:R50
+- Obayashi T, Kinoshita K (2009) Rank of correlation coefficient as a comparable measure for biological significance of gene coexpression. DNA Research 16 (5): 249-260. [doi:10.1093/dnares/dsp016](https://doi.org/10.1093/dnares/dsp016)
+- Tirosh I, Barkai N (2007) Comparative analysis indicates regulatory neofunctionalization. Genome Biology 8: R50. [doi:10.1186/gb-2007-8-4-r50](https://doi.org/10.1186/gb-2007-8-4-r50)
 
 **Sample requirements** (from paper):
 - More diverse samples > replicates from same study
