@@ -1,5 +1,5 @@
 Package: coexpr
-Title: Cross-Species Co-Expression Network Analysis
+Title: Cross-species co-expression network analysis in R
 Version: 0.1.0
 Authors@R:
     person("Martin", "Paliocha", , "martin.paliocha@nmbu.no", role = c("aut", "cre"))
