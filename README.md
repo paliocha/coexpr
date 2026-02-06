@@ -207,7 +207,7 @@ ors <- rank(ccs) / length(ccs)
 
 If you use this package, please cite the original paper:
 
-> Grønvold L, Hvidsten TR. Cross species comparative transcriptomics using co-expression networks. [hdl:11250/2712242](http://hdl.handle.net/11250/2712242)
+> Grønvold L, Hvidsten TR. Cross species comparative transcriptomics using co-expression networks. NMBU Philosophiae Doctor (PhD) Thesis 2017: 101. [hdl:11250/2712242](http://hdl.handle.net/11250/2712242)
 
 ## References
 
