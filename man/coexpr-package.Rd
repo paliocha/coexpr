@@ -4,7 +4,7 @@
 \name{coexpr-package}
 \alias{coexpr-package}
 \alias{coexpr}
-\title{coexpr: Cross-Species Co-Expression Network Analysis}
+\title{coexpr: Cross-species co-expression network analysis in R}
 \description{
 Implementation of cross-species comparative transcriptomics using co-expression networks based on Grønvold & Hvidsten. Calculates co-expression correlation scores (CCS) and ortholog rank scores (ORS) to identify conserved gene regulation patterns across species without requiring directly comparable samples.
 

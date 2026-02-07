@@ -26,7 +26,7 @@ test_that("calculate_ccs works with basic input", {
 
   # Check output structure
   expect_true(is.data.frame(ccs_results))
-  expect_true("ccs" %in% colnames(ccs_results))
+  expect_true("CCS" %in% colnames(ccs_results))
   expect_true("n_ref" %in% colnames(ccs_results))
   expect_equal(nrow(ccs_results), nrow(orthologs))
 
@@ -328,8 +328,8 @@ test_that("handle_self_diagonal works with tri_similarity objects", {
   rownames(mat_sp2) <- colnames(mat_sp2) <- paste0("Gene_sp2_", 1:n_genes)
 
   # Convert to tri_similarity
-  sim_sp1 <- as_tri_similarity(mat_sp1)
-  sim_sp2 <- as_tri_similarity(mat_sp2)
+  sim_sp1 <- as.TriSimilarity(mat_sp1)
+  sim_sp2 <- as.TriSimilarity(mat_sp2)
 
   orthologs <- data.frame(
     gene_sp1 = paste0("Gene_sp1_", 1:n_genes),
@@ -363,8 +363,8 @@ test_that("handle_self_diagonal results match between matrix and tri_similarity"
   rownames(mat_sp2) <- colnames(mat_sp2) <- paste0("Gene_sp2_", 1:n_genes)
 
   # Convert to tri_similarity
-  tri_sp1 <- as_tri_similarity(mat_sp1)
-  tri_sp2 <- as_tri_similarity(mat_sp2)
+  tri_sp1 <- as.TriSimilarity(mat_sp1)
+  tri_sp2 <- as.TriSimilarity(mat_sp2)
 
   orthologs <- data.frame(
     gene_sp1 = paste0("Gene_sp1_", 1:n_genes),

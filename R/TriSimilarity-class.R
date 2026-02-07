@@ -41,10 +41,8 @@ setClass("TriSimilarity",
 )
 
 
-#' Validity check for TriSimilarity
-#'
-#' @param object TriSimilarity object
-#' @return TRUE if valid, error message otherwise
+# Validity check for TriSimilarity
+# (internal, no roxygen docs needed)
 setValidity("TriSimilarity", function(object) {
   errors <- character()
 

@@ -342,12 +342,12 @@ comparison_df <- data.frame(
 )
 
 # Quantify divergence between methods
-comparison_df$CCS_diff <- comparison_df$CCS_all - comparison_df$CCS_1to1
+comparison_df$ccs_diff <- comparison_df$ccs_all - comparison_df$ccs_1to1
 diff_threshold <- 0.15
 
 comparison_df$divergence <- case_when(
-  comparison_df$CCS_diff > diff_threshold ~ "Higher with all orthologs",
-  comparison_df$CCS_diff < -diff_threshold ~ "Higher with 1:1 only",
+  comparison_df$ccs_diff > diff_threshold ~ "Higher with all orthologs",
+  comparison_df$ccs_diff < -diff_threshold ~ "Higher with 1:1 only",
   TRUE ~ "Concordant"
 )
 comparison_df$divergence <- factor(
@@ -358,7 +358,7 @@ comparison_df$divergence <- factor(
 cat("Reference set comparison:\n")
 cat("  1:1 orthologs only:", comparison_df$n_ref_1to1[1], "reference genes\n")
 cat("  All orthologs:", comparison_df$n_ref_all[1], "reference genes\n")
-cat("  Pearson correlation between CCS values:", round(cor(comparison_df$CCS_1to1, comparison_df$CCS_all), 3), "\n\n")
+cat("  Pearson correlation between CCS values:", round(cor(comparison_df$ccs_1to1, comparison_df$ccs_all), 3), "\n\n")
 
 cat("Concordance (|ΔCCS| ≤", diff_threshold, "):\n")
 print(table(comparison_df$divergence))
@@ -380,7 +380,7 @@ p1 <- ggplot(comparison_df, aes(x = ccs_1to1, y = ccs_all, color = divergence)) 
   labs(
     title = "CCS sensitivity to reference set composition",
     subtitle = sprintf("r = %.3f | %d ortholog pairs show |ΔCCS| > %.2f",
-                      cor(comparison_df$CCS_1to1, comparison_df$CCS_all),
+                      cor(comparison_df$ccs_1to1, comparison_df$ccs_all),
                       sum(comparison_df$divergence != "Concordant"),
                       diff_threshold),
     x = "CCS (1:1 orthologs as reference)",
@@ -404,7 +404,7 @@ p2 <- ggplot(comparison_df, aes(x = ccs_diff, fill = divergence)) +
   ) +
   labs(
     title = "Distribution of CCS differences",
-    subtitle = sprintf("Mean ΔCCS = %.3f", mean(comparison_df$CCS_diff)),
+    subtitle = sprintf("Mean ΔCCS = %.3f", mean(comparison_df$ccs_diff)),
     x = "ΔCCS (all orthologs − 1:1 only)",
     y = "Count"
   ) +
@@ -416,8 +416,8 @@ grid.arrange(p1, p2, ncol = 2)
 
 ```{r divergent_genes_table}
 # Identify orthologs most sensitive to reference set choice
-divergent_genes <- comparison_df[abs(comparison_df$CCS_diff) > diff_threshold, ]
-divergent_genes <- divergent_genes[order(-abs(divergent_genes$CCS_diff)), ]
+divergent_genes <- comparison_df[abs(comparison_df$ccs_diff) > diff_threshold, ]
+divergent_genes <- divergent_genes[order(-abs(divergent_genes$ccs_diff)), ]
 
 if (nrow(divergent_genes) > 0) {
   cat("Ortholog pairs most affected by reference set choice:\n\n")
@@ -487,7 +487,7 @@ cat("Percentage significant:",
 ### Distribution of expression conservation
 
 ```{r plot_logors, fig.cap="Distribution of expression conservation (logORS)", fig.width=8}
-ggplot(ors_results, aes(x = logors)) +
+ggplot(ors_results, aes(x = logORS)) +
   geom_histogram(bins = 50, fill = "steelblue", alpha = 0.8, color = "white") +
   geom_vline(xintercept = c(1, 2, 3), linetype = "dashed", color = "red", linewidth = 1) +
   labs(
@@ -511,7 +511,7 @@ ors_results$conservation <- cut(
              "Highly conserved (top 1%)", "Extremely conserved (top 0.1%)")
 )
 
-ggplot(ors_results, aes(x = ccs, y = logors, color = conservation)) +
+ggplot(ors_results, aes(x = CCS, y = logORS, color = conservation)) +
   geom_point(alpha = 0.6, size = 2) +
   geom_hline(yintercept = c(0, 1, 2, 3), linetype = "dashed", alpha = 0.3) +
   scale_color_manual(
@@ -548,7 +548,7 @@ cat("Percentage:", round(100 * nrow(highly_conserved) / nrow(ors_results), 1), "
 if (nrow(highly_conserved) > 0) {
   cat("Top 10 most conserved orthologs:\n")
   top_conserved <- highly_conserved[order(-highly_conserved$logORS), ]
-  print(head(top_conserved[, c("gene_sp1", "gene_sp2", "ccs", "logors")], 10))
+  print(head(top_conserved[, c("gene_sp1", "gene_sp2", "CCS", "logORS")], 10))
 }
 ```
 
@@ -724,7 +724,7 @@ ors_results$percentile <- cut(
 
 # Summary table
 percentile_summary <- aggregate(
-  cbind(ccs, logors) ~ percentile,
+  cbind(CCS, logORS) ~ percentile,
   data = ors_results,
   FUN = function(x) c(median = median(x), n = length(x))
 )
@@ -733,7 +733,7 @@ cat("\nConservation summary by percentile:\n")
 print(percentile_summary)
 
 # Cumulative distribution
-ggplot(ors_results, aes(x = logors)) +
+ggplot(ors_results, aes(x = logORS)) +
   stat_ecdf(geom = "line", color = "steelblue", linewidth = 1.2) +
   geom_vline(xintercept = c(1, 2, 3), linetype = "dashed", color = "red", alpha = 0.6) +
   annotate("text", x = 1.1, y = 0.15, label = "Top 10%", hjust = 0, color = "red") +
@@ -952,7 +952,7 @@ summary_by_type <- summarize_conservation(ors_all, by_type = TRUE)
 print(summary_by_type)
 
 # Visualize differences
-ggplot(ors_all, aes(x = type, y = logors, fill = type)) +
+ggplot(ors_all, aes(x = type, y = logORS, fill = type)) +
   geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
   geom_hline(yintercept = c(1, 2), linetype = "dashed", color = "red", alpha = 0.5) +
   scale_fill_manual(values = c("1:1" = "steelblue", "1:N" = "orange",

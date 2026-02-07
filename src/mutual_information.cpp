@@ -87,11 +87,7 @@ arma::imat discretize_matrix_cpp(const arma::mat& expr, int n_bins, int n_cores 
 }
 
 
-//' Compute entropy of a discrete variable
-//'
-//' @param x Integer vector of bin assignments
-//' @param n_bins Number of possible bins
-//' @return Entropy value in nats
+// Compute entropy of a discrete variable (internal helper)
 inline double compute_entropy(const arma::ivec& x, int n_bins) {
     const uword n = x.n_elem;
 
@@ -114,12 +110,7 @@ inline double compute_entropy(const arma::ivec& x, int n_bins) {
 }
 
 
-//' Compute joint entropy of two discrete variables
-//'
-//' @param x First integer vector
-//' @param y Second integer vector
-//' @param n_bins Number of bins per variable
-//' @return Joint entropy value in nats
+// Compute joint entropy of two discrete variables (internal helper)
 inline double compute_joint_entropy(const arma::ivec& x, const arma::ivec& y, int n_bins) {
     const uword n = x.n_elem;
 
@@ -145,14 +136,8 @@ inline double compute_joint_entropy(const arma::ivec& x, const arma::ivec& y, in
 }
 
 
-//' Compute mutual information between two discrete variables
-//'
-//' MI(X,Y) = H(X) + H(Y) - H(X,Y)
-//'
-//' @param x First integer vector
-//' @param y Second integer vector
-//' @param n_bins Number of bins
-//' @return Mutual information value in nats
+// Compute mutual information between two discrete variables (internal helper)
+// MI(X,Y) = H(X) + H(Y) - H(X,Y)
 inline double compute_mi(const arma::ivec& x, const arma::ivec& y, int n_bins) {
     double h_x = compute_entropy(x, n_bins);
     double h_y = compute_entropy(y, n_bins);

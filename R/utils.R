@@ -83,8 +83,8 @@ NULL
 #' @export
 summarize_conservation <- function(ors_results, by_type = TRUE) {
 
-  if (!"logors" %in% colnames(ors_results)) {
-    stop("ors_results must contain 'logors' from calculate_ors()")
+  if (!"logORS" %in% colnames(ors_results)) {
+    stop("ors_results must contain 'logORS' from calculate_ors()")
   }
 
   if (by_type && "type" %in% colnames(ors_results)) {

@@ -6,7 +6,7 @@ test_that("calculate_ors computes ORS correctly", {
   ccs_results <- data.frame(
     gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
     gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
-    ccs = rnorm(n_orthologs, mean = 0.5, sd = 0.2),
+    CCS = rnorm(n_orthologs, mean = 0.5, sd = 0.2),
     n_ref = 50,
     type = "1:1"
   )
@@ -16,9 +16,9 @@ test_that("calculate_ors computes ORS correctly", {
 
   # Check output structure
   expect_true(is.data.frame(ors_results))
-  expect_true("ors_sp1_to_sp2" %in% colnames(ors_results))
-  expect_true("ors_sp2_to_sp1" %in% colnames(ors_results))
-  expect_true("ors_mean" %in% colnames(ors_results))
+  expect_true("ORS_sp1_to_sp2" %in% colnames(ors_results))
+  expect_true("ORS_sp2_to_sp1" %in% colnames(ors_results))
+  expect_true("ORS" %in% colnames(ors_results))
   expect_equal(nrow(ors_results), n_orthologs)
 
   # Check ORS values are in [0, 1]
@@ -26,8 +26,8 @@ test_that("calculate_ors computes ORS correctly", {
   expect_true(all(ors_results$ORS_sp2_to_sp1 >= 0 & ors_results$ORS_sp2_to_sp1 <= 1))
   expect_true(all(ors_results$ORS >= 0 & ors_results$ORS <= 1))
 
-  # Check ors_mean uses global ranking (proper distribution from 1/n to 1)
-  # ors_mean should span [1/n, 1] for n unique CCS values
+  # Check ORS uses global ranking (proper distribution from 1/n to 1)
+  # ORS should span [1/n, 1] for n unique CCS values
   expected_global <- rank(ccs_results$CCS, ties.method = "average") / n_orthologs
   expect_equal(ors_results$ORS, expected_global)
 
@@ -44,22 +44,22 @@ test_that("calculate_ors logORS transformation works", {
   ccs_results <- data.frame(
     gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
     gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
-    ccs = runif(n_orthologs, -0.5, 1),
+    CCS = runif(n_orthologs, -0.5, 1),
     n_ref = 50
   )
 
   # Test with return_log = TRUE
   ors_with_log <- calculate_ors(ccs_results, return_log = TRUE)
-  expect_true("logors" %in% colnames(ors_with_log))
+  expect_true("logORS" %in% colnames(ors_with_log))
 
   # Test with return_log = FALSE
   ors_without_log <- calculate_ors(ccs_results, return_log = FALSE)
-  expect_false("logors" %in% colnames(ors_without_log))
+  expect_false("logORS" %in% colnames(ors_without_log))
 
   # Check logORS transformation is correct
-  # logORS = -log10(1 + 1e-4 - ors_mean)
-  expected_logors <- -log10(1 + 1e-4 - ors_with_log$ORS)
-  expect_equal(ors_with_log$logORS, expected_logors)
+  # logORS = -log10(1 + 1e-4 - ORS)
+  expected_logORS <- -log10(1 + 1e-4 - ors_with_log$ORS)
+  expect_equal(ors_with_log$logORS, expected_logORS)
 
   # Check that high ORS gives positive logORS
   # Top 10% should have logORS > 1
@@ -74,7 +74,7 @@ test_that("calculate_ors bidirectional scoring works as expected", {
   ccs_results <- data.frame(
     gene_sp1 = c("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A10", "A10"),
     gene_sp2 = c("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11", "B12"),
-    ccs = c(0.9, 0.8, 0.75, 0.7, 0.65, 0.62, 0.58, 0.55, 0.52, 0.6, 0.5, 0.4),
+    CCS = c(0.9, 0.8, 0.75, 0.7, 0.65, 0.62, 0.58, 0.55, 0.52, 0.6, 0.5, 0.4),
     n_ref = 10
   )
 
@@ -98,7 +98,7 @@ test_that("test_ors_significance identifies significant orthologs", {
   ccs_results <- data.frame(
     gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
     gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
-    ccs = rnorm(n_orthologs, mean = 0.5, sd = 0.3),
+    CCS = rnorm(n_orthologs, mean = 0.5, sd = 0.3),
     n_ref = 50
   )
 
@@ -112,7 +112,7 @@ test_that("test_ors_significance identifies significant orthologs", {
   expect_true("pvalue" %in% colnames(ors_sig))
   expect_true("significant" %in% colnames(ors_sig))
 
-  # Check pvalue calculation: pvalue = 1 - ors_mean
+  # Check pvalue calculation: pvalue = 1 - ORS
   expected_pvalue <- 1 - ors_sig$ORS
   expect_equal(ors_sig$pvalue, expected_pvalue)
 
@@ -137,14 +137,14 @@ test_that("calculate_ors validates inputs", {
 
   expect_error(
     calculate_ors(bad_results),
-    "ccs_results must contain 'ccs' column"
+    "ccs_results must contain 'CCS' column"
   )
 
   # Test insufficient ortholog pairs
   few_results <- data.frame(
     gene_sp1 = paste0("A", 1:5),
     gene_sp2 = paste0("B", 1:5),
-    ccs = runif(5)
+    CCS = runif(5)
   )
 
   expect_error(
@@ -154,7 +154,7 @@ test_that("calculate_ors validates inputs", {
 })
 
 test_that("test_ors_significance validates inputs", {
-  # Test missing 'ors_mean' column
+  # Test missing 'ORS' column
   bad_results <- data.frame(
     gene_sp1 = c("A", "B"),
     gene_sp2 = c("C", "D")
@@ -162,7 +162,7 @@ test_that("test_ors_significance validates inputs", {
 
   expect_error(
     test_ors_significance(bad_results),
-    "ors_results must contain 'ors_mean'"
+    "ors_results must contain 'ORS'"
   )
 })
 
@@ -171,7 +171,7 @@ test_that("calculate_ors handles edge cases", {
   perfect_ccs <- data.frame(
     gene_sp1 = paste0("Gene", 1:20),
     gene_sp2 = paste0("Gene", 1:20),
-    ccs = rep(1, 20),
+    CCS = rep(1, 20),
     n_ref = 20
   )
 
@@ -184,7 +184,7 @@ test_that("calculate_ors handles edge cases", {
   negative_ccs <- data.frame(
     gene_sp1 = paste0("Gene", 1:20),
     gene_sp2 = paste0("Gene", 1:20),
-    ccs = runif(20, -1, 0),
+    CCS = runif(20, -1, 0),
     n_ref = 20
   )
 
