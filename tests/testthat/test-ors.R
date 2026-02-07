@@ -22,18 +22,18 @@ test_that("calculate_ors computes ORS correctly", {
   expect_equal(nrow(ors_results), n_orthologs)
 
   # Check ORS values are in [0, 1]
-  expect_true(all(ors_results$ors_sp1_to_sp2 >= 0 & ors_results$ors_sp1_to_sp2 <= 1))
-  expect_true(all(ors_results$ors_sp2_to_sp1 >= 0 & ors_results$ors_sp2_to_sp1 <= 1))
-  expect_true(all(ors_results$ors_mean >= 0 & ors_results$ors_mean <= 1))
+  expect_true(all(ors_results$ORS_sp1_to_sp2 >= 0 & ors_results$ORS_sp1_to_sp2 <= 1))
+  expect_true(all(ors_results$ORS_sp2_to_sp1 >= 0 & ors_results$ORS_sp2_to_sp1 <= 1))
+  expect_true(all(ors_results$ORS >= 0 & ors_results$ORS <= 1))
 
   # Check ors_mean uses global ranking (proper distribution from 1/n to 1)
   # ors_mean should span [1/n, 1] for n unique CCS values
-  expected_global <- rank(ccs_results$ccs, ties.method = "average") / n_orthologs
-  expect_equal(ors_results$ors_mean, expected_global)
+  expected_global <- rank(ccs_results$CCS, ties.method = "average") / n_orthologs
+  expect_equal(ors_results$ORS, expected_global)
 
   # Check that ORS gives proper distribution (not all 1s)
-  expect_true(min(ors_results$ors_mean) < 0.5)
-  expect_true(max(ors_results$ors_mean) > 0.5)
+  expect_true(min(ors_results$ORS) < 0.5)
+  expect_true(max(ors_results$ORS) > 0.5)
 })
 
 test_that("calculate_ors logORS transformation works", {
@@ -58,14 +58,14 @@ test_that("calculate_ors logORS transformation works", {
 
   # Check logORS transformation is correct
   # logORS = -log10(1 + 1e-4 - ors_mean)
-  expected_logors <- -log10(1 + 1e-4 - ors_with_log$ors_mean)
-  expect_equal(ors_with_log$logors, expected_logors)
+  expected_logors <- -log10(1 + 1e-4 - ors_with_log$ORS)
+  expect_equal(ors_with_log$logORS, expected_logors)
 
   # Check that high ORS gives positive logORS
   # Top 10% should have logORS > 1
-  top_10pct_idx <- which(ors_with_log$ors_mean > 0.9)
+  top_10pct_idx <- which(ors_with_log$ORS > 0.9)
   if (length(top_10pct_idx) > 0) {
-    expect_true(all(ors_with_log$logors[top_10pct_idx] > 1))
+    expect_true(all(ors_with_log$logORS[top_10pct_idx] > 1))
   }
 })
 
@@ -85,9 +85,9 @@ test_that("calculate_ors bidirectional scoring works as expected", {
   expect_equal(nrow(a10_orthologs), 3)
 
   # Highest CCS (A10-B10: 0.6) should have highest ORS_sp1_to_sp2
-  expect_true(a10_orthologs$ors_sp1_to_sp2[a10_orthologs$gene_sp2 == "B10"] == 1.0)
-  expect_true(a10_orthologs$ors_sp1_to_sp2[a10_orthologs$gene_sp2 == "B11"] == 2/3)
-  expect_true(a10_orthologs$ors_sp1_to_sp2[a10_orthologs$gene_sp2 == "B12"] == 1/3)
+  expect_true(a10_orthologs$ORS_sp1_to_sp2[a10_orthologs$gene_sp2 == "B10"] == 1.0)
+  expect_true(a10_orthologs$ORS_sp1_to_sp2[a10_orthologs$gene_sp2 == "B11"] == 2/3)
+  expect_true(a10_orthologs$ORS_sp1_to_sp2[a10_orthologs$gene_sp2 == "B12"] == 1/3)
 })
 
 test_that("test_ors_significance identifies significant orthologs", {
@@ -113,7 +113,7 @@ test_that("test_ors_significance identifies significant orthologs", {
   expect_true("significant" %in% colnames(ors_sig))
 
   # Check pvalue calculation: pvalue = 1 - ors_mean
-  expected_pvalue <- 1 - ors_sig$ors_mean
+  expected_pvalue <- 1 - ors_sig$ORS
   expect_equal(ors_sig$pvalue, expected_pvalue)
 
   # Check significant flag is correct
@@ -123,7 +123,7 @@ test_that("test_ors_significance identifies significant orthologs", {
   # Significant orthologs should have high ORS (> 0.95 for alpha=0.05)
   sig_orthologs <- ors_sig[ors_sig$significant, ]
   if (nrow(sig_orthologs) > 0) {
-    expect_true(all(sig_orthologs$ors_mean > 0.95))
+    expect_true(all(sig_orthologs$ORS > 0.95))
   }
 })
 
@@ -178,7 +178,7 @@ test_that("calculate_ors handles edge cases", {
   ors_perfect <- calculate_ors(perfect_ccs, return_log = FALSE)
 
   # All should have equal ORS (ties)
-  expect_true(all(ors_perfect$ors_mean > 0))
+  expect_true(all(ors_perfect$ORS > 0))
 
   # Test with all negative CCS
   negative_ccs <- data.frame(
@@ -191,6 +191,6 @@ test_that("calculate_ors handles edge cases", {
   ors_negative <- calculate_ors(negative_ccs, return_log = TRUE)
 
   # Should still compute ORS correctly
-  expect_true(all(!is.na(ors_negative$ors_mean)))
-  expect_true(all(!is.na(ors_negative$logors)))
+  expect_true(all(!is.na(ors_negative$ORS)))
+  expect_true(all(!is.na(ors_negative$logORS)))
 })

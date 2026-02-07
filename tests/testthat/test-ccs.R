@@ -31,7 +31,7 @@ test_that("calculate_ccs works with basic input", {
   expect_equal(nrow(ccs_results), nrow(orthologs))
 
   # Check CCS values are in valid range
-  expect_true(all(ccs_results$ccs >= -1 & ccs_results$ccs <= 1))
+  expect_true(all(ccs_results$CCS >= -1 & ccs_results$CCS <= 1))
 
   # Check reference count is correct
   expect_true(all(ccs_results$n_ref == n_genes))
@@ -193,7 +193,191 @@ test_that("calculate_ccs parallel produces same results as sequential", {
   ccs_par <- calculate_ccs(sim_sp1, sim_sp2, orthologs, n_cores = 2)
 
   # Results should be identical (or very close due to floating point)
-  expect_equal(ccs_seq$ccs, ccs_par$ccs, tolerance = 1e-10)
+  expect_equal(ccs_seq$CCS, ccs_par$CCS, tolerance = 1e-10)
   expect_equal(ccs_seq$n_ref, ccs_par$n_ref)
   expect_equal(nrow(ccs_seq), nrow(ccs_par))
+})
+
+
+# Tests for self-diagonal handling
+
+test_that("handle_self_diagonal methods produce valid CCS values", {
+  set.seed(1001)
+  n_genes <- 25
+
+  # Create similarity matrices
+  sim_sp1 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  sim_sp1 <- (sim_sp1 + t(sim_sp1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("Gene_sp1_", 1:n_genes)
+
+  sim_sp2 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  sim_sp2 <- (sim_sp2 + t(sim_sp2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("Gene_sp2_", 1:n_genes)
+
+  # Create orthologs
+  orthologs <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_genes),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_genes),
+    type = "1:1"
+  )
+
+  # Test all three methods
+  ccs_mean <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "mean")
+  ccs_na <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "na")
+  ccs_none <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "none")
+
+  # All should return valid CCS values in range [-1, 1]
+  expect_true(all(ccs_mean$CCS >= -1 & ccs_mean$CCS <= 1))
+  expect_true(all(ccs_na$CCS >= -1 & ccs_na$CCS <= 1))
+  expect_true(all(ccs_none$CCS >= -1 & ccs_none$CCS <= 1))
+})
+
+test_that("handle_self_diagonal 'mean' and 'na' give lower CCS than 'none' for reference genes", {
+  # This test verifies that diagonal handling reduces CCS for genes in the reference set
+  # (where the self-correlation = 1 artificially inflates the correlation)
+
+  set.seed(1002)
+  n_genes <- 20
+
+  # Create similarity matrices with low off-diagonal correlations
+  # This makes the diagonal inflation more pronounced
+  sim_sp1 <- matrix(runif(n_genes * n_genes, 0.1, 0.3), nrow = n_genes)
+  sim_sp1 <- (sim_sp1 + t(sim_sp1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("Gene_sp1_", 1:n_genes)
+
+  sim_sp2 <- matrix(runif(n_genes * n_genes, 0.1, 0.3), nrow = n_genes)
+  sim_sp2 <- (sim_sp2 + t(sim_sp2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("Gene_sp2_", 1:n_genes)
+
+  # Create orthologs (all 1:1, so all genes are in reference set)
+  orthologs <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_genes),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_genes),
+    type = "1:1"
+  )
+
+  ccs_mean <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "mean")
+  ccs_na <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "na")
+  ccs_none <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "none")
+
+  # Mean CCS with 'mean' or 'na' handling should be lower than 'none'
+  # because the self-correlation (1.0, 1.0) pair is removed/replaced
+  expect_lt(mean(ccs_mean$CCS), mean(ccs_none$CCS) + 0.01)  # Allow small tolerance
+  expect_lt(mean(ccs_na$CCS), mean(ccs_none$CCS) + 0.01)
+})
+
+test_that("handle_self_diagonal does not affect non-reference genes", {
+  set.seed(1003)
+  n_genes <- 20
+
+  # Create similarity matrices
+  sim_sp1 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  sim_sp1 <- (sim_sp1 + t(sim_sp1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("Gene_sp1_", 1:n_genes)
+
+  sim_sp2 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  sim_sp2 <- (sim_sp2 + t(sim_sp2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("Gene_sp2_", 1:n_genes)
+
+  # Create orthologs: genes 1-15 are 1:1 (reference), genes 16-20 are 1:N (not reference)
+  orthologs <- data.frame(
+    gene_sp1 = c(paste0("Gene_sp1_", 1:15),
+                 "Gene_sp1_16", "Gene_sp1_16",  # 1:N
+                 "Gene_sp1_17", "Gene_sp1_17",
+                 "Gene_sp1_18"),
+    gene_sp2 = c(paste0("Gene_sp2_", 1:15),
+                 "Gene_sp2_16", "Gene_sp2_17",
+                 "Gene_sp2_18", "Gene_sp2_19",
+                 "Gene_sp2_20"),
+    type = c(rep("1:1", 15), rep("1:N", 5))
+  )
+
+  ccs_mean <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "mean")
+  ccs_none <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "none")
+
+  # For non-reference genes (1:N type), CCS should be similar regardless of diagonal handling
+  # because they are not in the reference set, so no diagonal to handle
+  non_ref_idx <- which(ccs_mean$type == "1:N")
+  ref_idx <- which(ccs_mean$type == "1:1")
+
+  # For 1:N genes, results should be very close (only floating point differences)
+  # because diagonal handling only affects genes in the reference set
+  # Note: The genes 16-17 from sp1 ARE in the matrix, but not in 1:1 reference set
+  expect_equal(ccs_mean$CCS[non_ref_idx], ccs_none$CCS[non_ref_idx], tolerance = 1e-10)
+})
+
+test_that("handle_self_diagonal works with tri_similarity objects", {
+  set.seed(1004)
+  n_genes <- 20
+
+  # Create similarity matrices
+  mat_sp1 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  mat_sp1 <- (mat_sp1 + t(mat_sp1)) / 2
+  diag(mat_sp1) <- 1
+  rownames(mat_sp1) <- colnames(mat_sp1) <- paste0("Gene_sp1_", 1:n_genes)
+
+  mat_sp2 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  mat_sp2 <- (mat_sp2 + t(mat_sp2)) / 2
+  diag(mat_sp2) <- 1
+  rownames(mat_sp2) <- colnames(mat_sp2) <- paste0("Gene_sp2_", 1:n_genes)
+
+  # Convert to tri_similarity
+  sim_sp1 <- as_tri_similarity(mat_sp1)
+  sim_sp2 <- as_tri_similarity(mat_sp2)
+
+  orthologs <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_genes),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_genes),
+    type = "1:1"
+  )
+
+  # All methods should work with tri_similarity
+  ccs_mean <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "mean")
+  ccs_na <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "na")
+  ccs_none <- calculate_ccs(sim_sp1, sim_sp2, orthologs, handle_self_diagonal = "none")
+
+  expect_true(all(is.finite(ccs_mean$CCS)))
+  expect_true(all(is.finite(ccs_na$CCS)))
+  expect_true(all(is.finite(ccs_none$CCS)))
+})
+
+test_that("handle_self_diagonal results match between matrix and tri_similarity", {
+  set.seed(1005)
+  n_genes <- 15
+
+  # Create similarity matrices
+  mat_sp1 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  mat_sp1 <- (mat_sp1 + t(mat_sp1)) / 2
+  diag(mat_sp1) <- 1
+  rownames(mat_sp1) <- colnames(mat_sp1) <- paste0("Gene_sp1_", 1:n_genes)
+
+  mat_sp2 <- matrix(runif(n_genes * n_genes), nrow = n_genes)
+  mat_sp2 <- (mat_sp2 + t(mat_sp2)) / 2
+  diag(mat_sp2) <- 1
+  rownames(mat_sp2) <- colnames(mat_sp2) <- paste0("Gene_sp2_", 1:n_genes)
+
+  # Convert to tri_similarity
+  tri_sp1 <- as_tri_similarity(mat_sp1)
+  tri_sp2 <- as_tri_similarity(mat_sp2)
+
+  orthologs <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_genes),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_genes),
+    type = "1:1"
+  )
+
+  # Compare results for all methods
+  for (method in c("mean", "na", "none")) {
+    ccs_mat <- calculate_ccs(mat_sp1, mat_sp2, orthologs, handle_self_diagonal = method)
+    ccs_tri <- calculate_ccs(tri_sp1, tri_sp2, orthologs, handle_self_diagonal = method)
+
+    expect_equal(ccs_mat$CCS, ccs_tri$CCS, tolerance = 1e-10,
+                 info = sprintf("Method '%s' results differ", method))
+  }
 })

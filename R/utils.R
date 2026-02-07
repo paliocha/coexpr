@@ -92,22 +92,22 @@ summarize_conservation <- function(ors_results, by_type = TRUE) {
       dplyr::group_by(.data$type) |>
       dplyr::summarize(
         n = dplyr::n(),
-        median_logors = median(.data$logors, na.rm = TRUE),
-        mean_logors = mean(.data$logors, na.rm = TRUE),
-        sd_logors = sd(.data$logors, na.rm = TRUE),
-        pct_top10 = sum(.data$logors > 1, na.rm = TRUE) / dplyr::n() * 100,
-        pct_top1 = sum(.data$logors > 2, na.rm = TRUE) / dplyr::n() * 100,
+        median_logORS = median(.data$logORS, na.rm = TRUE),
+        mean_logORS = mean(.data$logORS, na.rm = TRUE),
+        sd_logORS = sd(.data$logORS, na.rm = TRUE),
+        pct_top10 = sum(.data$logORS > 1, na.rm = TRUE) / dplyr::n() * 100,
+        pct_top1 = sum(.data$logORS > 2, na.rm = TRUE) / dplyr::n() * 100,
         .groups = "drop"
       )
   } else {
     summary_df <- ors_results |>
       dplyr::summarize(
         n = dplyr::n(),
-        median_logors = median(.data$logors, na.rm = TRUE),
-        mean_logors = mean(.data$logors, na.rm = TRUE),
-        sd_logors = sd(.data$logors, na.rm = TRUE),
-        pct_top10 = sum(.data$logors > 1, na.rm = TRUE) / dplyr::n() * 100,
-        pct_top1 = sum(.data$logors > 2, na.rm = TRUE) / dplyr::n() * 100
+        median_logORS = median(.data$logORS, na.rm = TRUE),
+        mean_logORS = mean(.data$logORS, na.rm = TRUE),
+        sd_logORS = sd(.data$logORS, na.rm = TRUE),
+        pct_top10 = sum(.data$logORS > 1, na.rm = TRUE) / dplyr::n() * 100,
+        pct_top1 = sum(.data$logORS > 2, na.rm = TRUE) / dplyr::n() * 100
       )
   }
 

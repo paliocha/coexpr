@@ -9,7 +9,8 @@ calculate_pcc_mr(
   method = c("pcc_mr", "pcc"),
   n_cores = 1,
   chunk_size = NULL,
-  mr_method = c("cached", "streaming")
+  mr_method = c("cached", "streaming"),
+  return_tri = TRUE
 )
 }
 \arguments{
@@ -31,10 +32,15 @@ via OpenMP. Default is 1 (sequential).}
 \item "streaming": Computes ranks on-demand, slower but more memory-efficient.
 Use for very large matrices that cause memory issues with "cached".
 }}
+
+\item{return_tri}{Logical. If TRUE (default), returns a TriSimilarity object
+that stores only the upper triangle for ~50\% memory savings. If FALSE,
+returns a full symmetric matrix. Note: CCS calculation works with both formats.}
 }
 \value{
-Symmetric similarity matrix (genes × genes) with values in the range
-0 to 1. Higher values indicate stronger co-expression.
+If return_tri = TRUE (default), a TriSimilarity object.
+If return_tri = FALSE, a symmetric similarity matrix (genes × genes).
+Values are in the range 0 to 1. Higher values indicate stronger co-expression.
 }
 \description{
 Calculates co-expression similarity using Pearson correlation followed by
@@ -51,6 +57,13 @@ The PCC+MR method:
 Where R_ij is the rank of S^PCC_ij in row i (ordered high to low).
 The log transformation emphasizes strong correlations and the mutual rank
 reduces bias from large co-expression clusters.
+\subsection{Triangular Storage}{
+
+By default, the function returns a TriSimilarity object that stores only
+the upper triangle of the symmetric matrix. This reduces memory usage by
+approximately 50\%. Use \code{as.matrix()} to convert to a full matrix if needed.
+}
+
 \subsection{Mutual Rank Methods}{
 
 The mutual rank transformation is implemented in C++ for efficiency:
@@ -74,8 +87,15 @@ The correlation step uses Rfast::cora which is a fast C++ implementation.
 expr <- matrix(rnorm(1000 * 50), nrow = 1000, ncol = 50)
 rownames(expr) <- paste0("Gene", 1:1000)
 
-# Calculate similarity (default cached method, fastest)
+# Calculate similarity (returns TriSimilarity by default)
 sim <- calculate_pcc_mr(expr)
+print(sim)  # Shows memory savings
+
+# Convert to full matrix if needed
+sim_full <- as.matrix(sim)
+
+# Or return full matrix directly (uses more memory)
+sim_full <- calculate_pcc_mr(expr, return_tri = FALSE)
 
 # For very large matrices with memory constraints, use streaming
 sim <- calculate_pcc_mr(large_expr, mr_method = "streaming")

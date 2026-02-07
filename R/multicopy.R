@@ -235,7 +235,7 @@ aggregate_by_mean <- function(orthologs, ccs_values) {
     dplyr::group_by(.data$gene_sp1) |>
     dplyr::summarize(
       gene_sp2 = .data$gene_sp2[1],  # Keep first for simplicity
-      ccs = mean(.data$ccs, na.rm = TRUE),
+      ccs = mean(.data$CCS, na.rm = TRUE),
       type = "aggregated",
       .groups = "drop"
     )
@@ -258,7 +258,7 @@ aggregate_by_max <- function(orthologs, ccs_values) {
   # For each gene in sp1, keep copy with max CCS
   orthologs_with_ccs |>
     dplyr::group_by(.data$gene_sp1) |>
-    dplyr::slice_max(order_by = .data$ccs, n = 1, with_ties = FALSE) |>
+    dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
 }
 

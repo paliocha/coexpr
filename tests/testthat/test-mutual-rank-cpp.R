@@ -90,13 +90,13 @@ test_that("calculate_pcc_mr with mr_method parameter works", {
   expr <- matrix(rnorm(n_genes * n_samples), nrow = n_genes, ncol = n_samples)
   rownames(expr) <- paste0("Gene", 1:n_genes)
 
-  # Test cached method
-  sim_cached <- calculate_pcc_mr(expr, mr_method = "cached")
+  # Test cached method (return_tri = FALSE for legacy tests)
+  sim_cached <- calculate_pcc_mr(expr, mr_method = "cached", return_tri = FALSE)
   expect_equal(dim(sim_cached), c(n_genes, n_genes))
   expect_true(all(diag(sim_cached) == 1))
 
   # Test streaming method
-  sim_streaming <- calculate_pcc_mr(expr, mr_method = "streaming")
+  sim_streaming <- calculate_pcc_mr(expr, mr_method = "streaming", return_tri = FALSE)
   expect_equal(dim(sim_streaming), c(n_genes, n_genes))
   expect_true(all(diag(sim_streaming) == 1))
 

@@ -11,6 +11,82 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// discretize_equalfreq_cpp
+arma::ivec discretize_equalfreq_cpp(const arma::vec& x, int n_bins);
+RcppExport SEXP _coexpr_discretize_equalfreq_cpp(SEXP xSEXP, SEXP n_binsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    rcpp_result_gen = Rcpp::wrap(discretize_equalfreq_cpp(x, n_bins));
+    return rcpp_result_gen;
+END_RCPP
+}
+// discretize_matrix_cpp
+arma::imat discretize_matrix_cpp(const arma::mat& expr, int n_bins, int n_cores);
+RcppExport SEXP _coexpr_discretize_matrix_cpp(SEXP exprSEXP, SEXP n_binsSEXP, SEXP n_coresSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type expr(exprSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_cores(n_coresSEXP);
+    rcpp_result_gen = Rcpp::wrap(discretize_matrix_cpp(expr, n_bins, n_cores));
+    return rcpp_result_gen;
+END_RCPP
+}
+// compute_mi_matrix_cpp
+arma::mat compute_mi_matrix_cpp(const arma::imat& expr_disc, int n_bins, int n_cores);
+RcppExport SEXP _coexpr_compute_mi_matrix_cpp(SEXP expr_discSEXP, SEXP n_binsSEXP, SEXP n_coresSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::imat& >::type expr_disc(expr_discSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_cores(n_coresSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_mi_matrix_cpp(expr_disc, n_bins, n_cores));
+    return rcpp_result_gen;
+END_RCPP
+}
+// apply_clr_cpp
+arma::mat apply_clr_cpp(const arma::mat& mi_matrix, int n_cores);
+RcppExport SEXP _coexpr_apply_clr_cpp(SEXP mi_matrixSEXP, SEXP n_coresSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type mi_matrix(mi_matrixSEXP);
+    Rcpp::traits::input_parameter< int >::type n_cores(n_coresSEXP);
+    rcpp_result_gen = Rcpp::wrap(apply_clr_cpp(mi_matrix, n_cores));
+    return rcpp_result_gen;
+END_RCPP
+}
+// compute_mi_clr_tri_cpp
+Rcpp::List compute_mi_clr_tri_cpp(const arma::mat& expr, int n_bins, int n_cores);
+RcppExport SEXP _coexpr_compute_mi_clr_tri_cpp(SEXP exprSEXP, SEXP n_binsSEXP, SEXP n_coresSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type expr(exprSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_cores(n_coresSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_mi_clr_tri_cpp(expr, n_bins, n_cores));
+    return rcpp_result_gen;
+END_RCPP
+}
+// compute_mi_clr_cpp
+arma::mat compute_mi_clr_cpp(const arma::mat& expr, int n_bins, int n_cores);
+RcppExport SEXP _coexpr_compute_mi_clr_cpp(SEXP exprSEXP, SEXP n_binsSEXP, SEXP n_coresSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type expr(exprSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_cores(n_coresSEXP);
+    rcpp_result_gen = Rcpp::wrap(compute_mi_clr_cpp(expr, n_bins, n_cores));
+    return rcpp_result_gen;
+END_RCPP
+}
 // compute_ranks_desc_cpp
 arma::vec compute_ranks_desc_cpp(const arma::vec& x);
 RcppExport SEXP _coexpr_compute_ranks_desc_cpp(SEXP xSEXP) {
@@ -66,13 +142,32 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// mutual_rank_transform_tri_cpp
+Rcpp::List mutual_rank_transform_tri_cpp(const arma::mat& sim_pcc, int n_cores);
+RcppExport SEXP _coexpr_mutual_rank_transform_tri_cpp(SEXP sim_pccSEXP, SEXP n_coresSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type sim_pcc(sim_pccSEXP);
+    Rcpp::traits::input_parameter< int >::type n_cores(n_coresSEXP);
+    rcpp_result_gen = Rcpp::wrap(mutual_rank_transform_tri_cpp(sim_pcc, n_cores));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_coexpr_discretize_equalfreq_cpp", (DL_FUNC) &_coexpr_discretize_equalfreq_cpp, 2},
+    {"_coexpr_discretize_matrix_cpp", (DL_FUNC) &_coexpr_discretize_matrix_cpp, 3},
+    {"_coexpr_compute_mi_matrix_cpp", (DL_FUNC) &_coexpr_compute_mi_matrix_cpp, 3},
+    {"_coexpr_apply_clr_cpp", (DL_FUNC) &_coexpr_apply_clr_cpp, 2},
+    {"_coexpr_compute_mi_clr_tri_cpp", (DL_FUNC) &_coexpr_compute_mi_clr_tri_cpp, 3},
+    {"_coexpr_compute_mi_clr_cpp", (DL_FUNC) &_coexpr_compute_mi_clr_cpp, 3},
     {"_coexpr_compute_ranks_desc_cpp", (DL_FUNC) &_coexpr_compute_ranks_desc_cpp, 1},
     {"_coexpr_mutual_rank_transform_cpp", (DL_FUNC) &_coexpr_mutual_rank_transform_cpp, 2},
     {"_coexpr_mutual_rank_transform_cached_cpp", (DL_FUNC) &_coexpr_mutual_rank_transform_cached_cpp, 2},
     {"_coexpr_has_openmp", (DL_FUNC) &_coexpr_has_openmp, 0},
     {"_coexpr_get_max_threads", (DL_FUNC) &_coexpr_get_max_threads, 0},
+    {"_coexpr_mutual_rank_transform_tri_cpp", (DL_FUNC) &_coexpr_mutual_rank_transform_tri_cpp, 2},
     {NULL, NULL, 0}
 };
 

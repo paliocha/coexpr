@@ -296,3 +296,106 @@ int get_max_threads() {
     return 1;
 #endif
 }
+
+
+//' Cached mutual rank transformation returning triangular format
+//'
+//' Transforms a Pearson correlation matrix into a PCC+MR similarity matrix
+//' and returns only the upper triangle (excluding diagonal) for memory efficiency.
+//' This reduces storage by approximately 50%.
+//'
+//' The upper triangle is returned in column-major order, which matches R's
+//' upper.tri() ordering. For a matrix with n genes, the returned vector has
+//' n*(n-1)/2 elements.
+//'
+//' @param sim_pcc Symmetric Pearson correlation matrix (n x n)
+//' @param n_cores Number of OpenMP threads to use (default: 1)
+//' @return List with components:
+//'   - data: numeric vector of upper triangle values (column-major, excluding diagonal)
+//'   - n: number of genes
+//'   - diag_value: diagonal value (always 1.0 for PCC+MR)
+//'
+//' @details
+//' The transformation is the same as mutual_rank_transform_cached_cpp:
+//' \deqn{S^{PCC+MR}_{ij} = 1 - \frac{\log(\sqrt{R_{ij} \cdot R_{ji}})}{\log(n)}}
+//'
+//' The upper triangle extraction follows column-major order:
+//' For positions (i,j) with i < j, elements are ordered by increasing j,
+//' then by increasing i within each column.
+//'
+//' @export
+// [[Rcpp::export]]
+Rcpp::List mutual_rank_transform_tri_cpp(const arma::mat& sim_pcc, int n_cores = 1) {
+    const uword n = sim_pcc.n_rows;
+
+    if (n != sim_pcc.n_cols) {
+        stop("sim_pcc must be a square matrix");
+    }
+
+    if (n < 2) {
+        stop("Matrix must have at least 2 rows/columns");
+    }
+
+    const double log_n = std::log(static_cast<double>(n));
+
+    // Allocate rank matrix
+    arma::mat row_ranks(n, n);
+
+    // Set number of threads
+#ifdef _OPENMP
+    if (n_cores > 1) {
+        omp_set_num_threads(n_cores);
+    }
+#endif
+
+    // Step 1: Precompute all row ranks in parallel
+    Rcpp::Rcout << "  Computing row ranks..." << std::endl;
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic) if(n_cores > 1)
+#endif
+    for (uword i = 0; i < n; ++i) {
+        arma::vec row_i = sim_pcc.row(i).t();
+        row_ranks.row(i) = compute_ranks_desc_cpp(row_i).t();
+    }
+
+    // Step 2: Compute upper triangle only (column-major order, excluding diagonal)
+    Rcpp::Rcout << "  Computing mutual ranks (triangular output)..." << std::endl;
+
+    uword tri_size = n * (n - 1) / 2;
+    arma::vec upper_tri(tri_size);
+
+    // Column-major order: iterate columns (j), then rows (i < j)
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic) if(n_cores > 1)
+#endif
+    for (uword j = 1; j < n; ++j) {
+        // Starting index for column j in the upper triangle vector
+        // Sum of elements in columns 1 to j-1: (j-1)*j/2 - (j-1) = (j-1)*(j-2)/2
+        // But we need to account for 0-indexing
+        uword col_start = (j - 1) * j / 2;
+
+        for (uword i = 0; i < j; ++i) {
+            // R_ij = rank of j in row i
+            // R_ji = rank of i in row j
+            double R_ij = row_ranks(i, j);
+            double R_ji = row_ranks(j, i);
+
+            double mutual_rank = std::sqrt(R_ij * R_ji);
+            double val = 1.0 - std::log(mutual_rank) / log_n;
+
+            // Clamp to [0, 1]
+            if (val < 0.0) val = 0.0;
+            if (val > 1.0) val = 1.0;
+
+            // Index in column-major upper triangle: col_start + row
+            upper_tri(col_start + i) = val;
+        }
+    }
+
+    return Rcpp::List::create(
+        Rcpp::Named("data") = upper_tri,
+        Rcpp::Named("n") = n,
+        Rcpp::Named("diag_value") = 1.0
+    );
+}

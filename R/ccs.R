@@ -4,8 +4,10 @@
 #' patterns with a set of reference 1:1 orthologs. This measures how well
 #' orthologous genes retain the same co-expression partners across species.
 #'
-#' @param sim_sp1 Similarity matrix for species 1 (genes × genes)
-#' @param sim_sp2 Similarity matrix for species 2 (genes × genes)
+#' @param sim_sp1 Similarity matrix for species 1. Can be a regular matrix or
+#'   a TriSimilarity object.
+#' @param sim_sp2 Similarity matrix for species 2. Can be a regular matrix or
+#'   a TriSimilarity object.
 #' @param orthologs Data frame with ortholog pairs. Must have columns:
 #'   - `gene_sp1`: Gene IDs from species 1
 #'   - `gene_sp2`: Gene IDs from species 2
@@ -16,10 +18,16 @@
 #'   1 (sequential). Set to a higher value to enable parallel processing via
 #'   the future/furrr framework. Use `parallel::detectCores() - 1` for maximum
 #'   parallelization while leaving one core free.
+#' @param handle_self_diagonal Character. How to handle self-correlation values
+#'   when a gene being evaluated is also in the reference set:
+#'   - `"mean"` (default): Replace diagonal with mean of non-diagonal values.
+#'     This matches the original CoExCorr implementation.
+#'   - `"na"`: Set diagonal to NA and use pairwise complete observations.
+#'   - `"none"`: Keep diagonal value as-is (may inflate CCS).
 #'
 #' @return Data frame with columns:
 #'   - `gene_sp1`, `gene_sp2`: Ortholog pair
-#'   - `ccs`: Co-expression correlation score
+#'   - `CCS`: Co-expression correlation score
 #'   - `n_ref`: Number of reference orthologs used
 #'
 #' @details
@@ -31,6 +39,20 @@
 #'
 #' The reference set should contain unduplicated genes performing ancestral
 #' functions with conserved expression patterns.
+#'
+#' ## Self-Diagonal Handling
+#'
+#' When calculating CCS for an ortholog pair (i, j), if gene i is also in the
+#' reference set, the co-expression vector for species 1 will include
+#' `sim[i,i] = 1.0` (self-correlation). Similarly for gene j in species 2.
+#' This can inflate CCS values because self-correlations are always 1.0 in
+#' both species.
+#'
+#' The `handle_self_diagonal` parameter controls how to address this:
+#' - `"mean"`: Replaces the diagonal value with the mean of the other values
+#'   in that column of the reference subset. This is the most conservative.
+#' - `"na"`: Sets diagonal to NA and uses `cor(..., use = "pairwise.complete.obs")`.
+#' - `"none"`: Keeps the diagonal value, which may slightly inflate CCS.
 #'
 #' ## Parallelization
 #'
@@ -60,17 +82,40 @@
 #'
 #' # Calculate CCS (parallel with 4 cores)
 #' ccs_results <- calculate_ccs(sim_at, sim_os, orthologs, n_cores = 4)
+#'
+#' # Without self-diagonal handling (may give slightly higher values)
+#' ccs_no_fix <- calculate_ccs(sim_at, sim_os, orthologs,
+#'                              handle_self_diagonal = "none")
 #' }
 #'
 #' @export
 calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
                           use_only_1to1 = TRUE,
-                          n_cores = 1) {
+                          n_cores = 1,
+                          handle_self_diagonal = c("mean", "na", "none")) {
 
-  # Validate inputs
-  if (!is.matrix(sim_sp1) || !is.matrix(sim_sp2)) {
-    stop("Similarity matrices must be matrices")
+  handle_self_diagonal <- match.arg(handle_self_diagonal)
+
+  # Validate inputs - accept matrices or TriSimilarity objects
+  is_valid_sim <- function(x) {
+    is.matrix(x) || is(x, "TriSimilarity")
   }
+
+  if (!is_valid_sim(sim_sp1) || !is_valid_sim(sim_sp2)) {
+    stop("Similarity matrices must be matrices or TriSimilarity objects")
+  }
+
+  # Get gene names from similarity matrices
+  get_genes <- function(sim) {
+    if (is(sim, "TriSimilarity")) {
+      sim@genes
+    } else {
+      rownames(sim)
+    }
+  }
+
+  genes_sp1 <- get_genes(sim_sp1)
+  genes_sp2 <- get_genes(sim_sp2)
 
   required_cols <- c("gene_sp1", "gene_sp2")
   if (!all(required_cols %in% colnames(orthologs))) {
@@ -106,8 +151,8 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
   }
 
   # Filter reference genes that exist in both similarity matrices
-  ref_sp1 <- intersect(ref_orthologs$gene_sp1, rownames(sim_sp1))
-  ref_sp2 <- intersect(ref_orthologs$gene_sp2, rownames(sim_sp2))
+  ref_sp1 <- intersect(ref_orthologs$gene_sp1, genes_sp1)
+  ref_sp2 <- intersect(ref_orthologs$gene_sp2, genes_sp2)
 
   ref_orthologs_filt <- ref_orthologs |>
     dplyr::filter(.data$gene_sp1 %in% ref_sp1, .data$gene_sp2 %in% ref_sp2)
@@ -120,10 +165,9 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
   }
 
   # Filter orthologs to those present in similarity matrices
-
   orthologs_filt <- orthologs |>
-    dplyr::filter(.data$gene_sp1 %in% rownames(sim_sp1),
-                  .data$gene_sp2 %in% rownames(sim_sp2))
+    dplyr::filter(.data$gene_sp1 %in% genes_sp1,
+                  .data$gene_sp2 %in% genes_sp2)
 
   n_pairs <- nrow(orthologs_filt)
   n_ref <- nrow(ref_orthologs_filt)
@@ -131,12 +175,54 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
   message(sprintf("Calculating CCS for %d ortholog pairs using %d references",
                   n_pairs, n_ref))
 
+  # Pre-extract reference gene vectors
+  ref_genes_sp1 <- ref_orthologs_filt$gene_sp1
+  ref_genes_sp2 <- ref_orthologs_filt$gene_sp2
+
+  # Helper function to extract column from similarity matrix
+  extract_sim_column <- function(sim, gene) {
+    if (is(sim, "TriSimilarity")) {
+      extractColumn(sim, gene)
+    } else {
+      sim[, gene]
+    }
+  }
+
+  # Helper function to handle self-diagonal
+  handle_diagonal <- function(coexpr, gene, ref_genes, method) {
+    if (method == "none") {
+      return(coexpr)
+    }
+
+    # Check if gene is in reference set
+    self_idx <- which(ref_genes == gene)
+
+    if (length(self_idx) == 0) {
+      # Gene not in reference set, no diagonal to handle
+      return(coexpr)
+    }
+
+    if (method == "mean") {
+      # Replace diagonal with mean of non-diagonal values
+      non_diag_vals <- coexpr[-self_idx]
+      coexpr[self_idx] <- mean(non_diag_vals, na.rm = TRUE)
+    } else if (method == "na") {
+      # Set diagonal to NA
+      coexpr[self_idx] <- NA
+    }
+
+    coexpr
+  }
+
+  # Determine correlation method based on diagonal handling
+  cor_use <- if (handle_self_diagonal == "na") {
+    "pairwise.complete.obs"
+  } else {
+    "everything"
+  }
+
   # Calculate CCS for each ortholog pair
   if (n_cores > 1) {
-    # Pre-extract reference gene vectors for efficiency
-    ref_genes_sp1 <- ref_orthologs_filt$gene_sp1
-    ref_genes_sp2 <- ref_orthologs_filt$gene_sp2
-
     # Use fork-based parallelism on Unix/macOS (shares memory, no copying)
     if (.Platform$OS.type == "unix") {
       message(sprintf("Using parallel computation with %d cores (fork-based)", n_cores))
@@ -147,9 +233,15 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
         function(i) {
           gene_sp1 <- orthologs_filt$gene_sp1[i]
           gene_sp2 <- orthologs_filt$gene_sp2[i]
-          coexpr_sp1 <- sim_sp1[ref_genes_sp1, gene_sp1]
-          coexpr_sp2 <- sim_sp2[ref_genes_sp2, gene_sp2]
-          stats::cor(coexpr_sp1, coexpr_sp2, method = "pearson")
+
+          coexpr_sp1 <- extract_sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
+          coexpr_sp2 <- extract_sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
+
+          # Handle self-diagonal
+          coexpr_sp1 <- handle_diagonal(coexpr_sp1, gene_sp1, ref_genes_sp1, handle_self_diagonal)
+          coexpr_sp2 <- handle_diagonal(coexpr_sp2, gene_sp2, ref_genes_sp2, handle_self_diagonal)
+
+          stats::cor(coexpr_sp1, coexpr_sp2, method = "pearson", use = cor_use)
         },
         mc.cores = n_cores
       )
@@ -159,9 +251,20 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
       # Windows: use furrr with chunked processing to reduce memory
       message(sprintf("Using parallel computation with %d cores (multisession)", n_cores))
 
-      # Pre-extract the relevant rows from similarity matrices to reduce memory
-      sim_sp1_ref <- sim_sp1[ref_genes_sp1, orthologs_filt$gene_sp1, drop = FALSE]
-      sim_sp2_ref <- sim_sp2[ref_genes_sp2, orthologs_filt$gene_sp2, drop = FALSE]
+      # Pre-extract the relevant columns for all ortholog pairs
+      if (is(sim_sp1, "TriSimilarity")) {
+        sim_sp1_ref <- extractRows(sim_sp1, ref_genes_sp1)
+        sim_sp1_cols <- sim_sp1_ref[, orthologs_filt$gene_sp1, drop = FALSE]
+      } else {
+        sim_sp1_cols <- sim_sp1[ref_genes_sp1, orthologs_filt$gene_sp1, drop = FALSE]
+      }
+
+      if (is(sim_sp2, "TriSimilarity")) {
+        sim_sp2_ref <- extractRows(sim_sp2, ref_genes_sp2)
+        sim_sp2_cols <- sim_sp2_ref[, orthologs_filt$gene_sp2, drop = FALSE]
+      } else {
+        sim_sp2_cols <- sim_sp2[ref_genes_sp2, orthologs_filt$gene_sp2, drop = FALSE]
+      }
 
       # Set up parallel backend with increased global size limit
       old_limit <- getOption("future.globals.maxSize")
@@ -171,13 +274,22 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
       oplan <- future::plan(future::multisession, workers = n_cores)
       on.exit(future::plan(oplan), add = TRUE)
 
+      # Get gene names for diagonal handling
+      pair_genes_sp1 <- orthologs_filt$gene_sp1
+      pair_genes_sp2 <- orthologs_filt$gene_sp2
+
       # Process in parallel using furrr with pre-extracted data
       ccs_values <- furrr::future_map_dbl(
         seq_len(n_pairs),
         function(i) {
-          coexpr_sp1 <- sim_sp1_ref[, i]
-          coexpr_sp2 <- sim_sp2_ref[, i]
-          stats::cor(coexpr_sp1, coexpr_sp2, method = "pearson")
+          coexpr_sp1 <- sim_sp1_cols[, i]
+          coexpr_sp2 <- sim_sp2_cols[, i]
+
+          # Handle self-diagonal
+          coexpr_sp1 <- handle_diagonal(coexpr_sp1, pair_genes_sp1[i], ref_genes_sp1, handle_self_diagonal)
+          coexpr_sp2 <- handle_diagonal(coexpr_sp2, pair_genes_sp2[i], ref_genes_sp2, handle_self_diagonal)
+
+          stats::cor(coexpr_sp1, coexpr_sp2, method = "pearson", use = cor_use)
         },
         .options = furrr::furrr_options(seed = TRUE)
       )
@@ -185,19 +297,20 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
 
     ccs_results <- orthologs_filt |>
       dplyr::mutate(
-        ccs = ccs_values,
+        CCS = ccs_values,
         n_ref = n_ref
       )
 
   } else {
-    # Sequential computation (original method)
+    # Sequential computation
     ccs_results <- orthologs_filt |>
       dplyr::rowwise() |>
       dplyr::mutate(
-        ccs = calculate_ccs_pair(
+        CCS = calculate_ccs_pair_internal(
           .data$gene_sp1, .data$gene_sp2,
           sim_sp1, sim_sp2,
-          ref_orthologs_filt
+          ref_genes_sp1, ref_genes_sp2,
+          handle_self_diagonal, cor_use
         ),
         n_ref = n_ref
       ) |>
@@ -208,7 +321,71 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
 }
 
 
-#' Calculate CCS for a single ortholog pair
+#' Calculate CCS for a single ortholog pair (internal)
+#'
+#' @param gene_sp1 Gene ID in species 1
+#' @param gene_sp2 Gene ID in species 2
+#' @param sim_sp1 Similarity matrix for species 1
+#' @param sim_sp2 Similarity matrix for species 2
+#' @param ref_genes_sp1 Reference gene IDs for species 1
+#' @param ref_genes_sp2 Reference gene IDs for species 2
+#' @param handle_self_diagonal Method for diagonal handling
+#' @param cor_use Argument for cor() 'use' parameter
+#'
+#' @return CCS value
+#' @keywords internal
+#' @noRd
+calculate_ccs_pair_internal <- function(gene_sp1, gene_sp2, sim_sp1, sim_sp2,
+                                        ref_genes_sp1, ref_genes_sp2,
+                                        handle_self_diagonal, cor_use) {
+
+  # Helper function to extract column from similarity matrix
+  extract_sim_column <- function(sim, gene) {
+    if (is(sim, "TriSimilarity")) {
+      extractColumn(sim, gene)
+    } else {
+      sim[, gene]
+    }
+  }
+
+  # Helper function to handle self-diagonal
+  handle_diagonal <- function(coexpr, gene, ref_genes, method) {
+    if (method == "none") {
+      return(coexpr)
+    }
+
+    self_idx <- which(ref_genes == gene)
+
+    if (length(self_idx) == 0) {
+      return(coexpr)
+    }
+
+    if (method == "mean") {
+      non_diag_vals <- coexpr[-self_idx]
+      coexpr[self_idx] <- mean(non_diag_vals, na.rm = TRUE)
+    } else if (method == "na") {
+      coexpr[self_idx] <- NA
+    }
+
+    coexpr
+  }
+
+  # Extract co-expression vectors with reference genes
+  coexpr_sp1 <- extract_sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
+  coexpr_sp2 <- extract_sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
+
+  # Handle self-diagonal
+  coexpr_sp1 <- handle_diagonal(coexpr_sp1, gene_sp1, ref_genes_sp1, handle_self_diagonal)
+  coexpr_sp2 <- handle_diagonal(coexpr_sp2, gene_sp2, ref_genes_sp2, handle_self_diagonal)
+
+  # Calculate Pearson correlation
+  ccs <- cor(coexpr_sp1, coexpr_sp2, method = "pearson", use = cor_use)
+
+  return(ccs)
+}
+
+
+#' Calculate CCS for a single ortholog pair (legacy wrapper)
 #'
 #' @param gene_sp1 Gene ID in species 1
 #' @param gene_sp2 Gene ID in species 2
@@ -220,13 +397,9 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
 #' @keywords internal
 #' @noRd
 calculate_ccs_pair <- function(gene_sp1, gene_sp2, sim_sp1, sim_sp2, ref_orthologs) {
-
-  # Extract co-expression vectors with reference genes
-  coexpr_sp1 <- sim_sp1[ref_orthologs$gene_sp1, gene_sp1]
-  coexpr_sp2 <- sim_sp2[ref_orthologs$gene_sp2, gene_sp2]
-
-  # Calculate Pearson correlation
-  ccs <- cor(coexpr_sp1, coexpr_sp2, method = "pearson")
-
-  return(ccs)
+  calculate_ccs_pair_internal(
+    gene_sp1, gene_sp2, sim_sp1, sim_sp2,
+    ref_orthologs$gene_sp1, ref_orthologs$gene_sp2,
+    "mean", "everything"
+  )
 }

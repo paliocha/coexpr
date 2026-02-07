@@ -15,10 +15,10 @@ suitable for visualization. If FALSE, returns raw ORS proportion.}
 \value{
 Input data frame with added columns:
 \itemize{
-\item \code{ors_sp1_to_sp2}: ORS from species 1 perspective (for multi-copy)
-\item \code{ors_sp2_to_sp1}: ORS from species 2 perspective (for multi-copy)
-\item \code{ors_mean}: Mean of bidirectional ORS (recommended for analysis)
-\item \code{logors} (if return_log=TRUE): -log10 transformed ORS
+\item \code{ORS_sp1_to_sp2}: ORS from species 1 perspective (for multi-copy)
+\item \code{ORS_sp2_to_sp1}: ORS from species 2 perspective (for multi-copy)
+\item \code{ORS}: Mean of bidirectional ORS (recommended for analysis)
+\item \code{logORS} (if return_log=TRUE): -log10 transformed ORS
 }
 }
 \description{
@@ -51,7 +51,7 @@ ccs_results <- calculate_ccs(sim_at, sim_os, orthologs)
 ors_results <- calculate_ors(ccs_results)
 
 # Filter highly conserved orthologs
-conserved <- ors_results |> dplyr::filter(logors > 2)
+conserved <- ors_results |> dplyr::filter(logORS > 2)
 }
 
 }

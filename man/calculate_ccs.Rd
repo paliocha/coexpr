@@ -4,12 +4,21 @@
 \alias{calculate_ccs}
 \title{Calculate co-expression correlation score (CCS)}
 \usage{
-calculate_ccs(sim_sp1, sim_sp2, orthologs, use_only_1to1 = TRUE, n_cores = 1)
+calculate_ccs(
+  sim_sp1,
+  sim_sp2,
+  orthologs,
+  use_only_1to1 = TRUE,
+  n_cores = 1,
+  handle_self_diagonal = c("mean", "na", "none")
+)
 }
 \arguments{
-\item{sim_sp1}{Similarity matrix for species 1 (genes × genes)}
+\item{sim_sp1}{Similarity matrix for species 1. Can be a regular matrix or
+a TriSimilarity object.}
 
-\item{sim_sp2}{Similarity matrix for species 2 (genes × genes)}
+\item{sim_sp2}{Similarity matrix for species 2. Can be a regular matrix or
+a TriSimilarity object.}
 
 \item{orthologs}{Data frame with ortholog pairs. Must have columns:
 \itemize{
@@ -25,12 +34,21 @@ as reference (recommended, matches paper). If FALSE, uses all orthologs.}
 1 (sequential). Set to a higher value to enable parallel processing via
 the future/furrr framework. Use \code{parallel::detectCores() - 1} for maximum
 parallelization while leaving one core free.}
+
+\item{handle_self_diagonal}{Character. How to handle self-correlation values
+when a gene being evaluated is also in the reference set:
+\itemize{
+\item \code{"mean"} (default): Replace diagonal with mean of non-diagonal values.
+This matches the original CoExCorr implementation.
+\item \code{"na"}: Set diagonal to NA and use pairwise complete observations.
+\item \code{"none"}: Keep diagonal value as-is (may inflate CCS).
+}}
 }
 \value{
 Data frame with columns:
 \itemize{
 \item \code{gene_sp1}, \code{gene_sp2}: Ortholog pair
-\item \code{ccs}: Co-expression correlation score
+\item \code{CCS}: Co-expression correlation score
 \item \code{n_ref}: Number of reference orthologs used
 }
 }
@@ -48,6 +66,23 @@ corresponding to reference orthologs are correlated.
 
 The reference set should contain unduplicated genes performing ancestral
 functions with conserved expression patterns.
+\subsection{Self-Diagonal Handling}{
+
+When calculating CCS for an ortholog pair (i, j), if gene i is also in the
+reference set, the co-expression vector for species 1 will include
+\code{sim[i,i] = 1.0} (self-correlation). Similarly for gene j in species 2.
+This can inflate CCS values because self-correlations are always 1.0 in
+both species.
+
+The \code{handle_self_diagonal} parameter controls how to address this:
+\itemize{
+\item \code{"mean"}: Replaces the diagonal value with the mean of the other values
+in that column of the reference subset. This is the most conservative.
+\item \code{"na"}: Sets diagonal to NA and uses \code{cor(..., use = "pairwise.complete.obs")}.
+\item \code{"none"}: Keeps the diagonal value, which may slightly inflate CCS.
+}
+}
+
 \subsection{Parallelization}{
 
 CCS calculation is embarrassingly parallel - each ortholog pair can be
@@ -73,6 +108,10 @@ ccs_results <- calculate_ccs(sim_at, sim_os, orthologs)
 
 # Calculate CCS (parallel with 4 cores)
 ccs_results <- calculate_ccs(sim_at, sim_os, orthologs, n_cores = 4)
+
+# Without self-diagonal handling (may give slightly higher values)
+ccs_no_fix <- calculate_ccs(sim_at, sim_os, orthologs,
+                             handle_self_diagonal = "none")
 }
 
 }

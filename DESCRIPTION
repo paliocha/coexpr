@@ -17,9 +17,12 @@ Imports:
     dplyr (>= 1.1.0),
     future,
     furrr,
+    methods,
     Rcpp,
     Rfast,
-    rlang
+    rlang,
+    stats,
+    utils
 LinkingTo:
     Rcpp,
     RcppArmadillo
@@ -33,7 +36,19 @@ Suggests:
     circlize,
     grid,
     knitr,
-    rmarkdown
+    rmarkdown,
+    infotheo,
+    biomaRt,
+    httr
 Config/testthat/edition: 3
 LazyData: true
 VignetteBuilder: knitr
+Collate:
+    'RcppExports.R'
+    'TriSimilarity-class.R'
+    'ccs.R'
+    'coexpr-package.R'
+    'multicopy.R'
+    'ors.R'
+    'similarity.R'
+    'utils.R'

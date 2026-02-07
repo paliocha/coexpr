@@ -1,0 +1,60 @@
+#!/bin/sh
+# Configure script for coexpr package
+# Detects OpenMP support and configures Makevars accordingly
+
+# Get R configuration
+: ${R_HOME=`R RHOME`}
+if test -z "${R_HOME}"; then
+  echo "Could not determine R_HOME"
+  exit 1
+fi
+
+CC=`"${R_HOME}/bin/R" CMD config CC`
+CFLAGS=`"${R_HOME}/bin/R" CMD config CFLAGS`
+CXX=`"${R_HOME}/bin/R" CMD config CXX`
+CXXFLAGS=`"${R_HOME}/bin/R" CMD config CXXFLAGS`
+SHLIB_OPENMP_CXXFLAGS=`"${R_HOME}/bin/R" CMD config SHLIB_OPENMP_CXXFLAGS`
+
+# Check for OpenMP support
+OPENMP_CXXFLAGS=""
+OPENMP_LIBS=""
+EXTRA_CXXFLAGS=""
+
+echo "Checking for OpenMP support..."
+
+# macOS with Homebrew libomp
+if [ "$(uname -s)" = "Darwin" ]; then
+  LIBOMP_PATH="/opt/homebrew/opt/libomp"
+  if [ -f "${LIBOMP_PATH}/lib/libomp.dylib" ]; then
+    echo "  Found Homebrew libomp at ${LIBOMP_PATH}"
+    OPENMP_CXXFLAGS="-fopenmp -I${LIBOMP_PATH}/include"
+    # Use explicit path to override R's bundled libomp
+    OPENMP_LIBS="-L${LIBOMP_PATH}/lib -Wl,-rpath,${LIBOMP_PATH}/lib ${LIBOMP_PATH}/lib/libomp.dylib"
+    # Add flag to suppress R header warning (clang 21+ issue)
+    EXTRA_CXXFLAGS="-Wno-unknown-warning-option"
+  elif [ -n "${SHLIB_OPENMP_CXXFLAGS}" ]; then
+    echo "  Using R's OpenMP flags: ${SHLIB_OPENMP_CXXFLAGS}"
+    OPENMP_CXXFLAGS="${SHLIB_OPENMP_CXXFLAGS}"
+    OPENMP_LIBS="${SHLIB_OPENMP_CXXFLAGS}"
+  else
+    echo "  OpenMP not found, building without parallel support"
+  fi
+else
+  # Linux and other systems
+  if [ -n "${SHLIB_OPENMP_CXXFLAGS}" ]; then
+    echo "  Using R's OpenMP flags: ${SHLIB_OPENMP_CXXFLAGS}"
+    OPENMP_CXXFLAGS="${SHLIB_OPENMP_CXXFLAGS}"
+    OPENMP_LIBS="${SHLIB_OPENMP_CXXFLAGS}"
+  else
+    echo "  OpenMP not found, building without parallel support"
+  fi
+fi
+
+# Write Makevars
+echo "Creating src/Makevars..."
+sed -e "s|@OPENMP_CXXFLAGS@|${OPENMP_CXXFLAGS}|g" \
+    -e "s|@OPENMP_LIBS@|${OPENMP_LIBS}|g" \
+    -e "s|@EXTRA_CXXFLAGS@|${EXTRA_CXXFLAGS}|g" \
+    src/Makevars.in > src/Makevars
+
+echo "Configuration complete."

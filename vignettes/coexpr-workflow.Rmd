@@ -168,10 +168,11 @@ sim_bsyl <- calculate_pcc_mr(expr_bsyl, method = "pcc_mr")
 
 # Check output
 cat("\nSimilarity matrix properties:\n")
+cat("- Class:", class(sim_bdis), "\n")
 cat("- Dimensions:", dim(sim_bdis), "\n")
-cat("- Value range:", range(sim_bdis), "\n")
-cat("- Diagonal (self-similarity):", unique(diag(sim_bdis)), "\n")
-cat("- Is symmetric:", isSymmetric(sim_bdis), "\n")
+cat("- Value range:", range(sim_bdis@data), "\n")
+cat("- Diagonal (self-similarity):", sim_bdis@diag_value, "\n")
+cat("- Number of genes:", sim_bdis@n, "\n")
 ```
 
 The PCC+MR method produces a symmetric similarity matrix with values in [0, 1], where higher values indicate stronger co-expression.
@@ -293,9 +294,9 @@ cat("  Ortholog pairs evaluated:", nrow(ccs_results), "\n")
 cat("  Reference set size:", ccs_results$n_ref[1], "genes\n\n")
 
 cat("CCS distribution:\n")
-cat("  Strong conservation (CCS > 0.5):", sum(ccs_results$ccs > 0.5), "\n")
-cat("  Moderate (0 ≤ CCS ≤ 0.5):", sum(ccs_results$ccs >= 0 & ccs_results$ccs <= 0.5), "\n")
-cat("  Diverged (CCS < 0):", sum(ccs_results$ccs < 0), "\n")
+cat("  Strong conservation (CCS > 0.5):", sum(ccs_results$CCS > 0.5), "\n")
+cat("  Moderate (0 ≤ CCS ≤ 0.5):", sum(ccs_results$CCS >= 0 & ccs_results$CCS <= 0.5), "\n")
+cat("  Diverged (CCS < 0):", sum(ccs_results$CCS < 0), "\n")
 ```
 
 CCS values range from -1 to 1:
@@ -334,19 +335,19 @@ ccs_all_ref <- calculate_ccs(sim_bdis, sim_bsyl, orthologs_all, use_only_1to1 = 
 comparison_df <- data.frame(
   gene_sp1 = ccs_1to1_ref$gene_sp1,
   gene_sp2 = ccs_1to1_ref$gene_sp2,
-  ccs_1to1 = ccs_1to1_ref$ccs,
-  ccs_all = ccs_all_ref$ccs,
+  ccs_1to1 = ccs_1to1_ref$CCS,
+  ccs_all = ccs_all_ref$CCS,
   n_ref_1to1 = ccs_1to1_ref$n_ref[1],
   n_ref_all = ccs_all_ref$n_ref[1]
 )
 
 # Quantify divergence between methods
-comparison_df$ccs_diff <- comparison_df$ccs_all - comparison_df$ccs_1to1
+comparison_df$CCS_diff <- comparison_df$CCS_all - comparison_df$CCS_1to1
 diff_threshold <- 0.15
 
 comparison_df$divergence <- case_when(
-  comparison_df$ccs_diff > diff_threshold ~ "Higher with all orthologs",
-  comparison_df$ccs_diff < -diff_threshold ~ "Higher with 1:1 only",
+  comparison_df$CCS_diff > diff_threshold ~ "Higher with all orthologs",
+  comparison_df$CCS_diff < -diff_threshold ~ "Higher with 1:1 only",
   TRUE ~ "Concordant"
 )
 comparison_df$divergence <- factor(
@@ -357,7 +358,7 @@ comparison_df$divergence <- factor(
 cat("Reference set comparison:\n")
 cat("  1:1 orthologs only:", comparison_df$n_ref_1to1[1], "reference genes\n")
 cat("  All orthologs:", comparison_df$n_ref_all[1], "reference genes\n")
-cat("  Pearson correlation between CCS values:", round(cor(comparison_df$ccs_1to1, comparison_df$ccs_all), 3), "\n\n")
+cat("  Pearson correlation between CCS values:", round(cor(comparison_df$CCS_1to1, comparison_df$CCS_all), 3), "\n\n")
 
 cat("Concordance (|ΔCCS| ≤", diff_threshold, "):\n")
 print(table(comparison_df$divergence))
@@ -379,7 +380,7 @@ p1 <- ggplot(comparison_df, aes(x = ccs_1to1, y = ccs_all, color = divergence)) 
   labs(
     title = "CCS sensitivity to reference set composition",
     subtitle = sprintf("r = %.3f | %d ortholog pairs show |ΔCCS| > %.2f",
-                      cor(comparison_df$ccs_1to1, comparison_df$ccs_all),
+                      cor(comparison_df$CCS_1to1, comparison_df$CCS_all),
                       sum(comparison_df$divergence != "Concordant"),
                       diff_threshold),
     x = "CCS (1:1 orthologs as reference)",
@@ -403,7 +404,7 @@ p2 <- ggplot(comparison_df, aes(x = ccs_diff, fill = divergence)) +
   ) +
   labs(
     title = "Distribution of CCS differences",
-    subtitle = sprintf("Mean ΔCCS = %.3f", mean(comparison_df$ccs_diff)),
+    subtitle = sprintf("Mean ΔCCS = %.3f", mean(comparison_df$CCS_diff)),
     x = "ΔCCS (all orthologs − 1:1 only)",
     y = "Count"
   ) +
@@ -415,8 +416,8 @@ grid.arrange(p1, p2, ncol = 2)
 
 ```{r divergent_genes_table}
 # Identify orthologs most sensitive to reference set choice
-divergent_genes <- comparison_df[abs(comparison_df$ccs_diff) > diff_threshold, ]
-divergent_genes <- divergent_genes[order(-abs(divergent_genes$ccs_diff)), ]
+divergent_genes <- comparison_df[abs(comparison_df$CCS_diff) > diff_threshold, ]
+divergent_genes <- divergent_genes[order(-abs(divergent_genes$CCS_diff)), ]
 
 if (nrow(divergent_genes) > 0) {
   cat("Ortholog pairs most affected by reference set choice:\n\n")
@@ -465,9 +466,9 @@ cat("ORS results summary:\n")
 cat("  Ortholog pairs:", nrow(ors_results), "\n\n")
 
 cat("logORS distribution:\n")
-cat("  Min:", round(min(ors_results$logors), 2), "\n")
-cat("  Median:", round(median(ors_results$logors), 2), "\n")
-cat("  Max:", round(max(ors_results$logors), 2), "\n")
+cat("  Min:", round(min(ors_results$logORS), 2), "\n")
+cat("  Median:", round(median(ors_results$logORS), 2), "\n")
+cat("  Max:", round(max(ors_results$logORS), 2), "\n")
 ```
 
 ```{r ors_significance}
@@ -504,7 +505,7 @@ ggplot(ors_results, aes(x = logors)) +
 ```{r plot_ccs_ors, fig.cap="Relationship between CCS and ORS", fig.width=8, fig.height=6}
 # Add conservation category
 ors_results$conservation <- cut(
-  ors_results$logors,
+  ors_results$logORS,
   breaks = c(-Inf, 0, 1, 2, 3, Inf),
   labels = c("Diverged", "Moderate", "Conserved (top 10%)",
              "Highly conserved (top 1%)", "Extremely conserved (top 0.1%)")
@@ -538,7 +539,7 @@ ggplot(ors_results, aes(x = ccs, y = logors, color = conservation)) +
 
 ```{r conserved_genes}
 # Filter for highly conserved orthologs (top 1%)
-highly_conserved <- ors_results[ors_results$logors > 2, ]
+highly_conserved <- ors_results[ors_results$logORS > 2, ]
 
 cat("Highly conserved orthologs (top 1%):\n")
 cat("Count:", nrow(highly_conserved), "\n")
@@ -546,7 +547,7 @@ cat("Percentage:", round(100 * nrow(highly_conserved) / nrow(ors_results), 1), "
 
 if (nrow(highly_conserved) > 0) {
   cat("Top 10 most conserved orthologs:\n")
-  top_conserved <- highly_conserved[order(-highly_conserved$logors), ]
+  top_conserved <- highly_conserved[order(-highly_conserved$logORS), ]
   print(head(top_conserved[, c("gene_sp1", "gene_sp2", "ccs", "logors")], 10))
 }
 ```
@@ -561,8 +562,8 @@ For each highly conserved ortholog pair, we can examine how many of their top co
 
 ```{r neighborhood_overlap, fig.width=8, fig.height=6}
 # Get top conserved orthologs (top 5%)
-top_threshold <- quantile(ors_results$logors, 0.95)
-top_conserved <- ors_results[ors_results$logors >= top_threshold, ]
+top_threshold <- quantile(ors_results$logORS, 0.95)
+top_conserved <- ors_results[ors_results$logORS >= top_threshold, ]
 
 # For each ortholog pair, calculate neighborhood overlap
 # (what fraction of top-k neighbors in sp1 have orthologs in top-k neighbors of sp2)
@@ -648,7 +649,7 @@ Let's visualize the similarity patterns among the most conserved orthologs in bo
 ```{r heatmap_conserved, fig.width=10, fig.height=8}
 # Select top 25 most conserved orthologs
 n_top <- min(25, nrow(top_conserved))
-top_genes <- top_conserved[order(-top_conserved$logors)[1:n_top], ]
+top_genes <- top_conserved[order(-top_conserved$logORS)[1:n_top], ]
 
 # Extract similarity submatrices
 genes_sp1 <- top_genes$gene_sp1[top_genes$gene_sp1 %in% rownames(sim_bdis)]
@@ -715,7 +716,7 @@ ggplot(heatmap_combined, aes(x = gene1, y = gene2, fill = similarity)) +
 ```{r percentile_distribution, fig.width=8, fig.height=5}
 # Create percentile bins
 ors_results$percentile <- cut(
-  rank(ors_results$logors) / nrow(ors_results) * 100,
+  rank(ors_results$logORS) / nrow(ors_results) * 100,
   breaks = c(0, 10, 25, 50, 75, 90, 95, 99, 100),
   labels = c("0-10%", "10-25%", "25-50%", "50-75%", "75-90%", "90-95%", "95-99%", "99-100%"),
   include.lowest = TRUE
@@ -786,7 +787,7 @@ if (requireNamespace("ComplexHeatmap", quietly = TRUE) &&
 
     # Select top 50 conserved 1:1 ortholog pairs
     ors_1to1 <- ors_results[ors_results$type == "1:1", ]
-    top_pairs <- ors_1to1[order(-ors_1to1$logors), ][1:min(50, nrow(ors_1to1)), ]
+    top_pairs <- ors_1to1[order(-ors_1to1$logORS), ][1:min(50, nrow(ors_1to1)), ]
 
     # Filter to genes present in temporal data
     top_pairs <- top_pairs[
@@ -849,7 +850,7 @@ if (requireNamespace("ComplexHeatmap", quietly = TRUE) &&
     # Create right-side annotation for logORS
     row_anno_right <- rowAnnotation(
       logORS = anno_barplot(
-        top_pairs$logors,
+        top_pairs$logORS,
         bar_width = 0.8,
         gp = gpar(fill = "steelblue", col = "steelblue"),
         width = unit(1.5, "cm")
@@ -996,9 +997,9 @@ ors_best_hit <- calculate_ors(ccs_best_hit)
 
 cat("\nConservation comparison:\n")
 cat("Strict (1:1 only) - Median logORS:",
-    round(median(ors_results$logors), 3), "\n")
+    round(median(ors_results$logORS), 3), "\n")
 cat("Best hit strategy - Median logORS:",
-    round(median(ors_best_hit$logors), 3), "\n")
+    round(median(ors_best_hit$logORS), 3), "\n")
 ```
 
 ## Summary workflow
@@ -1026,7 +1027,7 @@ ors_results <- calculate_ors(ccs_results)
 ors_results <- test_ors_significance(ors_results, alpha = 0.05)
 
 # 6. Identify conserved genes
-conserved <- ors_results[ors_results$logors > 2, ]
+conserved <- ors_results[ors_results$logORS > 2, ]
 ```
 
 ## Biological interpretation
