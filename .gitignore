@@ -26,3 +26,6 @@ data-raw/*.rds
 
 # Generated vignette output
 vignettes/*.html
+
+# Local planning docs
+improvement_plan.md
