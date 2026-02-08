@@ -7,18 +7,26 @@
 calculate_pcc_mr(
   expr_matrix,
   method = c("pcc_mr", "pcc"),
+  cor_method = c("pearson", "spearman", "kendall"),
   n_cores = 1,
   chunk_size = NULL,
   mr_method = c("cached", "streaming"),
-  return_tri = TRUE
+  return_tri = TRUE,
+  cache_dir = NULL
 )
 }
 \arguments{
 \item{expr_matrix}{Numeric matrix of gene expression (genes × samples).
 Rows are genes, columns are samples. Should be log-transformed.}
 
-\item{method}{Character. Either "pcc_mr" (default, recommended) for Pearson
-correlation with mutual rank, or "pcc" for Pearson only.}
+\item{method}{Character. Either "pcc_mr" (default, recommended) for
+correlation with mutual rank, or "pcc" for correlation only.}
+
+\item{cor_method}{Character. The correlation method to use: "pearson"
+(default), "spearman" (rank-based, robust to non-normal data), or
+"kendall" (robust to outliers). Spearman is computed as Pearson on
+rank-transformed data for speed. Kendall uses \code{\link[stats:cor]{stats::cor()}} and is
+substantially slower for large matrices.}
 
 \item{n_cores}{Integer. Number of cores for parallel mutual rank computation
 via OpenMP. Default is 1 (sequential).}
@@ -36,6 +44,12 @@ Use for very large matrices that cause memory issues with "cached".
 \item{return_tri}{Logical. If TRUE (default), returns a TriSimilarity object
 that stores only the upper triangle for ~50\% memory savings. If FALSE,
 returns a full symmetric matrix. Note: CCS calculation works with both formats.}
+
+\item{cache_dir}{Character or NULL. If a directory path is provided, the
+computed similarity matrix is cached to disk. On subsequent calls with
+identical expression data and method parameters, the cached result is
+loaded instead of recomputing. The directory is created automatically
+if it doesn't exist. Default is NULL (no caching).}
 }
 \value{
 If return_tri = TRUE (default), a TriSimilarity object.
@@ -43,20 +57,34 @@ If return_tri = FALSE, a symmetric similarity matrix (genes × genes).
 Values are in the range 0 to 1. Higher values indicate stronger co-expression.
 }
 \description{
-Calculates co-expression similarity using Pearson correlation followed by
+Calculates co-expression similarity using correlation followed by
 mutual rank normalization (Obayashi et al. 2009). This is the best-performing
 method identified in Grønvold & Hvidsten for cross-species comparisons.
 }
 \details{
 The PCC+MR method:
 \enumerate{
-\item Calculates Pearson correlation: S^PCC_ij = cor(E_i, E_j)
-\item Transforms using log mutual rank: S^(PCC+MR)_ij = 1 - log(sqrt(R_ij * R_ji)) / log(n)
+\item Calculates correlation: S_ij = cor(E_i, E_j)
+\item Transforms using log mutual rank: S^(MR)_ij = 1 - log(sqrt(R_ij * R_ji)) / log(n)
 }
 
-Where R_ij is the rank of S^PCC_ij in row i (ordered high to low).
+Where R_ij is the rank of S_ij in row i (ordered high to low).
 The log transformation emphasizes strong correlations and the mutual rank
 reduces bias from large co-expression clusters.
+\subsection{Correlation Methods}{
+\itemize{
+\item \strong{pearson} (default): Standard Pearson correlation, computed via
+\code{Rfast::cora()} (fast C++). Best for approximately linear relationships.
+\item \strong{spearman}: Rank-based correlation. Computed by rank-transforming each
+gene's expression vector then applying \code{Rfast::cora()}, preserving the
+Rfast speed advantage. Robust to non-normal distributions and monotonic
+nonlinear relationships.
+\item \strong{kendall}: Kendall's tau correlation via \code{\link[stats:cor]{stats::cor()}}. Robust to
+outliers and small samples, but O(n^2 log n) per pair — much slower than
+Pearson/Spearman. A warning is emitted for matrices with >500 genes.
+}
+}
+
 \subsection{Triangular Storage}{
 
 By default, the function returns a TriSimilarity object that stores only
@@ -78,7 +106,8 @@ on-demand for each row pair. Use only if "cached" causes memory issues.
 \subsection{Parallelization}{
 
 The mutual rank step uses OpenMP for parallel computation when available.
-The correlation step uses Rfast::cora which is a fast C++ implementation.
+The Pearson/Spearman correlation step uses Rfast::cora which is a fast C++
+implementation.
 }
 }
 \examples{
@@ -96,6 +125,12 @@ sim_full <- as.matrix(sim)
 
 # Or return full matrix directly (uses more memory)
 sim_full <- calculate_pcc_mr(expr, return_tri = FALSE)
+
+# Use Spearman correlation (robust to non-normal data)
+sim_spearman <- calculate_pcc_mr(expr, cor_method = "spearman")
+
+# Use Kendall correlation (robust to outliers, slower)
+sim_kendall <- calculate_pcc_mr(expr, cor_method = "kendall")
 
 # For very large matrices with memory constraints, use streaming
 sim <- calculate_pcc_mr(large_expr, mr_method = "streaming")

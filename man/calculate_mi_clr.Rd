@@ -4,7 +4,13 @@
 \alias{calculate_mi_clr}
 \title{Calculate MI+CLR similarity matrix}
 \usage{
-calculate_mi_clr(expr_matrix, n_bins = 10, n_cores = 1, return_tri = TRUE)
+calculate_mi_clr(
+  expr_matrix,
+  n_bins = 10,
+  n_cores = 1,
+  return_tri = TRUE,
+  cache_dir = NULL
+)
 }
 \arguments{
 \item{expr_matrix}{Numeric matrix of gene expression (genes × samples).
@@ -18,6 +24,12 @@ Default is 1 (sequential).}
 
 \item{return_tri}{Logical. If TRUE (default), returns a TriSimilarity object.
 If FALSE, returns a full symmetric matrix.}
+
+\item{cache_dir}{Character or NULL. If a directory path is provided, the
+computed similarity matrix is cached to disk. On subsequent calls with
+identical expression data and method parameters, the cached result is
+loaded instead of recomputing. The directory is created automatically
+if it doesn't exist. Default is NULL (no caching).}
 }
 \value{
 If return_tri = TRUE (default), a TriSimilarity object (S4 class).

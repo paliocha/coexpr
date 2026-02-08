@@ -1,13 +1,18 @@
 #' Calculate PCC+MR similarity matrix
 #'
-#' Calculates co-expression similarity using Pearson correlation followed by
+#' Calculates co-expression similarity using correlation followed by
 #' mutual rank normalization (Obayashi et al. 2009). This is the best-performing
 #' method identified in Grønvold & Hvidsten for cross-species comparisons.
 #'
 #' @param expr_matrix Numeric matrix of gene expression (genes × samples).
 #'   Rows are genes, columns are samples. Should be log-transformed.
-#' @param method Character. Either "pcc_mr" (default, recommended) for Pearson
-#'   correlation with mutual rank, or "pcc" for Pearson only.
+#' @param method Character. Either "pcc_mr" (default, recommended) for
+#'   correlation with mutual rank, or "pcc" for correlation only.
+#' @param cor_method Character. The correlation method to use: "pearson"
+#'   (default), "spearman" (rank-based, robust to non-normal data), or
+#'   "kendall" (robust to outliers). Spearman is computed as Pearson on
+#'   rank-transformed data for speed. Kendall uses [stats::cor()] and is
+#'   substantially slower for large matrices.
 #' @param n_cores Integer. Number of cores for parallel mutual rank computation
 #'   via OpenMP. Default is 1 (sequential).
 #' @param chunk_size Deprecated. No longer used (kept for API compatibility).
@@ -19,6 +24,11 @@
 #' @param return_tri Logical. If TRUE (default), returns a TriSimilarity object
 #'   that stores only the upper triangle for ~50% memory savings. If FALSE,
 #'   returns a full symmetric matrix. Note: CCS calculation works with both formats.
+#' @param cache_dir Character or NULL. If a directory path is provided, the
+#'   computed similarity matrix is cached to disk. On subsequent calls with
+#'   identical expression data and method parameters, the cached result is
+#'   loaded instead of recomputing. The directory is created automatically
+#'   if it doesn't exist. Default is NULL (no caching).
 #'
 #' @return If return_tri = TRUE (default), a TriSimilarity object.
 #'   If return_tri = FALSE, a symmetric similarity matrix (genes × genes).
@@ -26,12 +36,24 @@
 #'
 #' @details
 #' The PCC+MR method:
-#' 1. Calculates Pearson correlation: S^PCC_ij = cor(E_i, E_j)
-#' 2. Transforms using log mutual rank: S^(PCC+MR)_ij = 1 - log(sqrt(R_ij * R_ji)) / log(n)
+#' 1. Calculates correlation: S_ij = cor(E_i, E_j)
+#' 2. Transforms using log mutual rank: S^(MR)_ij = 1 - log(sqrt(R_ij * R_ji)) / log(n)
 #'
-#' Where R_ij is the rank of S^PCC_ij in row i (ordered high to low).
+#' Where R_ij is the rank of S_ij in row i (ordered high to low).
 #' The log transformation emphasizes strong correlations and the mutual rank
 #' reduces bias from large co-expression clusters.
+#'
+#' ## Correlation Methods
+#'
+#' - **pearson** (default): Standard Pearson correlation, computed via
+#'   `Rfast::cora()` (fast C++). Best for approximately linear relationships.
+#' - **spearman**: Rank-based correlation. Computed by rank-transforming each
+#'   gene's expression vector then applying `Rfast::cora()`, preserving the
+#'   Rfast speed advantage. Robust to non-normal distributions and monotonic
+#'   nonlinear relationships.
+#' - **kendall**: Kendall's tau correlation via [stats::cor()]. Robust to
+#'   outliers and small samples, but O(n^2 log n) per pair — much slower than
+#'   Pearson/Spearman. A warning is emitted for matrices with >500 genes.
 #'
 #' ## Triangular Storage
 #'
@@ -50,7 +72,8 @@
 #' ## Parallelization
 #'
 #' The mutual rank step uses OpenMP for parallel computation when available.
-#' The correlation step uses Rfast::cora which is a fast C++ implementation.
+#' The Pearson/Spearman correlation step uses Rfast::cora which is a fast C++
+#' implementation.
 #'
 #' @references
 #' Obayashi T, Kinoshita K (2009) Rank of correlation coefficient as a comparable
@@ -75,6 +98,12 @@
 #' # Or return full matrix directly (uses more memory)
 #' sim_full <- calculate_pcc_mr(expr, return_tri = FALSE)
 #'
+#' # Use Spearman correlation (robust to non-normal data)
+#' sim_spearman <- calculate_pcc_mr(expr, cor_method = "spearman")
+#'
+#' # Use Kendall correlation (robust to outliers, slower)
+#' sim_kendall <- calculate_pcc_mr(expr, cor_method = "kendall")
+#'
 #' # For very large matrices with memory constraints, use streaming
 #' sim <- calculate_pcc_mr(large_expr, mr_method = "streaming")
 #'
@@ -84,11 +113,37 @@
 #'
 #' @export
 calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
+                             cor_method = c("pearson", "spearman", "kendall"),
                              n_cores = 1, chunk_size = NULL,
                              mr_method = c("cached", "streaming"),
-                             return_tri = TRUE) {
+                             return_tri = TRUE,
+                             cache_dir = NULL) {
   method <- match.arg(method)
+  cor_method <- match.arg(cor_method)
   mr_method <- match.arg(mr_method)
+
+  # Check cache before computing
+  cache_key <- NULL
+  if (!is.null(cache_dir)) {
+    cache_key <- compute_cache_key(expr_matrix, method,
+                                   cor_method = cor_method)
+    cached <- cache_load(cache_dir, cache_key)
+    if (!is.null(cached)) {
+      message("Loading cached similarity matrix...")
+      if (!return_tri) {
+        return(as.matrix(cached))
+      }
+      return(cached)
+    }
+  }
+
+  # Helper to save result before returning
+  maybe_cache <- function(result) {
+    if (!is.null(cache_dir) && !is.null(cache_key)) {
+      cache_save(result, cache_dir, cache_key)
+    }
+    result
+  }
 
   # Validate input
   if (!is.matrix(expr_matrix)) {
@@ -100,12 +155,35 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
 
   n_genes <- nrow(expr_matrix)
 
-  # Calculate Pearson correlation using Rfast (very fast C++ implementation)
+  # Calculate correlation matrix
   # Note: We avoid furrr/future here as it spawns separate processes that
   # copy the expression matrix, causing high memory usage. Rfast::cora is
   # already highly optimized and fast enough for most matrices.
-  message("Calculating Pearson correlation...")
-  sim_pcc <- Rfast::cora(t(expr_matrix))
+  cor_label <- switch(cor_method,
+    pearson = "Pearson",
+    spearman = "Spearman",
+    kendall = "Kendall"
+  )
+  message(sprintf("Calculating %s correlation...", cor_label))
+
+  if (cor_method == "pearson") {
+    sim_pcc <- Rfast::cora(t(expr_matrix))
+  } else if (cor_method == "spearman") {
+    # Spearman = Pearson on ranks, so rank-transform then use fast Rfast::cora
+    ranked <- t(apply(expr_matrix, 1, rank))
+    sim_pcc <- Rfast::cora(t(ranked))
+  } else {
+    # Kendall: no fast shortcut, use stats::cor
+    if (n_genes > 500) {
+      warning(
+        sprintf(
+          "Kendall correlation is slow for large matrices (%d genes). Consider using 'pearson' or 'spearman'.",
+          n_genes
+        )
+      )
+    }
+    sim_pcc <- stats::cor(t(expr_matrix), method = "kendall")
+  }
 
   # Clip to [-1, 1] due to numerical precision issues
   sim_pcc[sim_pcc > 1] <- 1
@@ -116,9 +194,9 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
 
   if (method == "pcc") {
     if (return_tri) {
-      return(as.TriSimilarity(sim_pcc))
+      return(maybe_cache(as.TriSimilarity(sim_pcc)))
     } else {
-      return(sim_pcc)
+      return(maybe_cache(sim_pcc))
     }
   }
 
@@ -140,11 +218,11 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
     if (return_tri) {
       # Use triangular output function for memory efficiency
       result <- mutual_rank_transform_tri_cpp(sim_pcc, effective_cores)
-      return(TriSimilarity(
+      return(maybe_cache(TriSimilarity(
         data = result$data,
         genes = rownames(expr_matrix),
         diag_value = result$diag_value
-      ))
+      )))
     } else {
       sim_pcc_mr <- mutual_rank_transform_cached_cpp(sim_pcc, effective_cores)
     }
@@ -160,14 +238,14 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
     if (return_tri) {
       rownames(sim_pcc_mr) <- rownames(expr_matrix)
       colnames(sim_pcc_mr) <- rownames(expr_matrix)
-      return(as.TriSimilarity(sim_pcc_mr))
+      return(maybe_cache(as.TriSimilarity(sim_pcc_mr)))
     }
   }
 
   rownames(sim_pcc_mr) <- rownames(expr_matrix)
   colnames(sim_pcc_mr) <- rownames(expr_matrix)
 
-  return(sim_pcc_mr)
+  return(maybe_cache(sim_pcc_mr))
 }
 
 
@@ -189,6 +267,11 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
 #'   Default is 1 (sequential).
 #' @param return_tri Logical. If TRUE (default), returns a TriSimilarity object.
 #'   If FALSE, returns a full symmetric matrix.
+#' @param cache_dir Character or NULL. If a directory path is provided, the
+#'   computed similarity matrix is cached to disk. On subsequent calls with
+#'   identical expression data and method parameters, the cached result is
+#'   loaded instead of recomputing. The directory is created automatically
+#'   if it doesn't exist. Default is NULL (no caching).
 #'
 #' @return If return_tri = TRUE (default), a TriSimilarity object (S4 class).
 #'   If return_tri = FALSE, a symmetric similarity matrix (genes × genes).
@@ -245,7 +328,31 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
 calculate_mi_clr <- function(expr_matrix,
                              n_bins = 10,
                              n_cores = 1,
-                             return_tri = TRUE) {
+                             return_tri = TRUE,
+                             cache_dir = NULL) {
+
+  # Check cache before computing
+  cache_key <- NULL
+  if (!is.null(cache_dir)) {
+    cache_key <- compute_cache_key(expr_matrix, "mi_clr",
+                                   n_bins = n_bins)
+    cached <- cache_load(cache_dir, cache_key)
+    if (!is.null(cached)) {
+      message("Loading cached similarity matrix...")
+      if (!return_tri) {
+        return(as.matrix(cached))
+      }
+      return(cached)
+    }
+  }
+
+  # Helper to save result before returning
+  maybe_cache <- function(result) {
+    if (!is.null(cache_dir) && !is.null(cache_key)) {
+      cache_save(result, cache_dir, cache_key)
+    }
+    result
+  }
 
   # Validate input
   if (!is.matrix(expr_matrix)) {
@@ -292,16 +399,16 @@ calculate_mi_clr <- function(expr_matrix,
   # Call C++ implementation
   if (return_tri) {
     result <- compute_mi_clr_tri_cpp(expr_matrix, as.integer(n_bins), effective_cores)
-    return(TriSimilarity(
+    return(maybe_cache(TriSimilarity(
       data = result$data,
       genes = gene_names,
       diag_value = result$diag_value
-    ))
+    )))
   } else {
     clr_matrix <- compute_mi_clr_cpp(expr_matrix, as.integer(n_bins), effective_cores)
     rownames(clr_matrix) <- gene_names
     colnames(clr_matrix) <- gene_names
-    return(clr_matrix)
+    return(maybe_cache(clr_matrix))
   }
 }
 

@@ -4,15 +4,25 @@
 \alias{test_ors_significance}
 \title{Test significance of ORS}
 \usage{
-test_ors_significance(ors_results, alpha = 0.05)
+test_ors_significance(ors_results, alpha = 0.05, p_adjust_method = "BH")
 }
 \arguments{
 \item{ors_results}{Data frame from \code{calculate_ors()}}
 
 \item{alpha}{Significance level (default 0.05)}
+
+\item{p_adjust_method}{Method for multiple testing correction, passed to
+\code{\link[stats:p.adjust]{stats::p.adjust()}}. Default \code{"BH"} (Benjamini-Hochberg FDR). Use
+\code{"none"} to skip adjustment and test on raw p-values.}
 }
 \value{
-Input data frame with added column \code{significant} (logical)
+Input data frame with added columns:
+\itemize{
+\item \code{pvalue}: raw empirical p-value (1 - ORS)
+\item \code{padj}: adjusted p-value (only when \code{p_adjust_method != "none"})
+\item \code{significant}: logical, TRUE if adjusted p-value < alpha
+(or raw p-value when \code{p_adjust_method = "none"})
+}
 }
 \description{
 Tests whether an ortholog pair has significantly conserved co-expression
@@ -20,7 +30,10 @@ compared to random expectation.
 }
 \details{
 The null hypothesis is that the ortholog has no more conserved co-expression
-than a random gene pair. This corresponds to ORS = 0.5 (median rank).
+than a random gene pair. Under the null, ORS is uniform on [0, 1], so the
+raw p-value is simply \code{1 - ORS}.
 
-The alternative hypothesis is that ORS > 0.5 (better than median).
+Because genome-scale analyses test thousands of ortholog pairs
+simultaneously, multiple testing correction is applied by default using
+the Benjamini-Hochberg procedure to control the false discovery rate.
 }

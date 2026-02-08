@@ -226,3 +226,93 @@ test_that("calculate_mi_clr parallel produces consistent results", {
     expect_equal(sim_seq, sim_par, tolerance = 1e-10)
   }
 })
+
+
+# cor_method tests
+
+test_that("Spearman correlation produces valid output", {
+  set.seed(700)
+  expr <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
+  rownames(expr) <- paste0("Gene", 1:50)
+
+  sim <- calculate_pcc_mr(expr, method = "pcc", cor_method = "spearman",
+                          return_tri = FALSE)
+
+  expect_true(is.matrix(sim))
+  expect_equal(dim(sim), c(50, 50))
+  expect_true(all(sim >= -1 & sim <= 1))
+  expect_true(isSymmetric(sim, tol = 1e-10))
+  expect_equal(as.vector(diag(sim)), rep(1, 50))
+})
+
+test_that("Spearman differs from Pearson on non-normal data", {
+  set.seed(701)
+  # Create skewed data where Spearman and Pearson should differ
+  expr <- matrix(rexp(50 * 20, rate = 0.5), nrow = 50, ncol = 20)
+  rownames(expr) <- paste0("Gene", 1:50)
+
+  sim_pearson <- calculate_pcc_mr(expr, method = "pcc", cor_method = "pearson",
+                                  return_tri = FALSE)
+  sim_spearman <- calculate_pcc_mr(expr, method = "pcc", cor_method = "spearman",
+                                   return_tri = FALSE)
+
+  # They should not be identical
+
+  expect_false(identical(sim_pearson, sim_spearman))
+  # But both should be valid correlation matrices
+  expect_true(all(sim_pearson >= -1 & sim_pearson <= 1))
+  expect_true(all(sim_spearman >= -1 & sim_spearman <= 1))
+})
+
+test_that("Spearman + MR produces values in [0,1]", {
+  set.seed(702)
+  expr <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
+  rownames(expr) <- paste0("Gene", 1:50)
+
+  sim <- calculate_pcc_mr(expr, method = "pcc_mr", cor_method = "spearman",
+                          return_tri = FALSE)
+
+  expect_true(all(sim >= 0 & sim <= 1))
+  expect_equal(as.vector(diag(sim)), rep(1, 50))
+  expect_true(isSymmetric(sim))
+})
+
+test_that("Kendall correlation produces valid output", {
+  set.seed(703)
+  # Small matrix since Kendall is slow
+  expr <- matrix(rnorm(20 * 10), nrow = 20, ncol = 10)
+  rownames(expr) <- paste0("Gene", 1:20)
+
+  sim <- calculate_pcc_mr(expr, method = "pcc", cor_method = "kendall",
+                          return_tri = FALSE)
+
+  expect_true(is.matrix(sim))
+  expect_equal(dim(sim), c(20, 20))
+  expect_true(all(sim >= -1 & sim <= 1))
+  expect_true(isSymmetric(sim, tol = 1e-10))
+  expect_equal(as.vector(diag(sim)), rep(1, 20))
+})
+
+test_that("Kendall warns for large matrices", {
+  set.seed(704)
+  expr <- matrix(rnorm(501 * 5), nrow = 501, ncol = 5)
+  rownames(expr) <- paste0("Gene", 1:501)
+
+  expect_warning(
+    calculate_pcc_mr(expr, method = "pcc", cor_method = "kendall",
+                     return_tri = FALSE),
+    "Kendall correlation is slow"
+  )
+})
+
+test_that("default cor_method produces identical results to explicit pearson", {
+  set.seed(705)
+  expr <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
+  rownames(expr) <- paste0("Gene", 1:50)
+
+  sim_default <- calculate_pcc_mr(expr, method = "pcc", return_tri = FALSE)
+  sim_pearson <- calculate_pcc_mr(expr, method = "pcc", cor_method = "pearson",
+                                  return_tri = FALSE)
+
+  expect_identical(sim_default, sim_pearson)
+})
