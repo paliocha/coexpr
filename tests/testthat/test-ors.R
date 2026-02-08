@@ -90,11 +90,10 @@ test_that("calculate_ors bidirectional scoring works as expected", {
   expect_true(a10_orthologs$ORS_sp1_to_sp2[a10_orthologs$gene_sp2 == "B12"] == 1/3)
 })
 
-test_that("test_ors_significance identifies significant orthologs", {
+test_that("test_ors_significance with BH correction (default)", {
   set.seed(456)
   n_orthologs <- 100
 
-  # Create CCS results
   ccs_results <- data.frame(
     gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
     gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
@@ -102,29 +101,103 @@ test_that("test_ors_significance identifies significant orthologs", {
     n_ref = 50
   )
 
-  # Calculate ORS
   ors_results <- calculate_ors(ccs_results)
 
-  # Test significance
+  # Default is BH correction
   ors_sig <- test_ors_significance(ors_results, alpha = 0.05)
 
-  # Check output structure
+  # Check output columns
   expect_true("pvalue" %in% colnames(ors_sig))
+  expect_true("padj" %in% colnames(ors_sig))
   expect_true("significant" %in% colnames(ors_sig))
 
-  # Check pvalue calculation: pvalue = 1 - ORS
+  # Raw pvalue = 1 - ORS
   expected_pvalue <- 1 - ors_sig$ORS
   expect_equal(ors_sig$pvalue, expected_pvalue)
 
-  # Check significant flag is correct
-  expected_sig <- ors_sig$pvalue < 0.05
-  expect_equal(ors_sig$significant, expected_sig)
+  # padj should be BH-adjusted
+  expected_padj <- p.adjust(ors_sig$pvalue, method = "BH")
+  expect_equal(ors_sig$padj, expected_padj)
 
-  # Significant orthologs should have high ORS (> 0.95 for alpha=0.05)
-  sig_orthologs <- ors_sig[ors_sig$significant, ]
-  if (nrow(sig_orthologs) > 0) {
-    expect_true(all(sig_orthologs$ORS > 0.95))
-  }
+  # Significance is based on padj, not raw pvalue
+  expect_equal(ors_sig$significant, ors_sig$padj < 0.05)
+
+  # BH-adjusted p-values are >= raw p-values (more conservative)
+  expect_true(all(ors_sig$padj >= ors_sig$pvalue))
+})
+
+test_that("test_ors_significance with p_adjust_method = 'none' uses raw p-values", {
+  set.seed(456)
+  n_orthologs <- 100
+
+  ccs_results <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
+    CCS = rnorm(n_orthologs, mean = 0.5, sd = 0.3),
+    n_ref = 50
+  )
+
+  ors_results <- calculate_ors(ccs_results)
+  ors_sig <- test_ors_significance(ors_results, alpha = 0.05,
+                                   p_adjust_method = "none")
+
+  # No padj column when method = "none"
+  expect_false("padj" %in% colnames(ors_sig))
+  expect_true("pvalue" %in% colnames(ors_sig))
+
+  # Significance based on raw pvalue
+  expect_equal(ors_sig$significant, ors_sig$pvalue < 0.05)
+})
+
+test_that("BH correction is more conservative than no correction", {
+  set.seed(789)
+  n_orthologs <- 100
+
+  ccs_results <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
+    CCS = rnorm(n_orthologs, mean = 0.5, sd = 0.3),
+    n_ref = 50
+  )
+
+  ors_results <- calculate_ors(ccs_results)
+
+  sig_none <- test_ors_significance(ors_results, alpha = 0.05,
+                                    p_adjust_method = "none")
+  sig_bh <- test_ors_significance(ors_results, alpha = 0.05,
+                                  p_adjust_method = "BH")
+
+  n_none <- sum(sig_none$significant)
+  n_bh <- sum(sig_bh$significant)
+
+  # BH should find fewer or equal significant hits
+  expect_true(n_bh <= n_none)
+})
+
+test_that("test_ors_significance supports different correction methods", {
+  set.seed(456)
+  n_orthologs <- 50
+
+  ccs_results <- data.frame(
+    gene_sp1 = paste0("Gene_sp1_", 1:n_orthologs),
+    gene_sp2 = paste0("Gene_sp2_", 1:n_orthologs),
+    CCS = rnorm(n_orthologs, mean = 0.5, sd = 0.3),
+    n_ref = 50
+  )
+
+  ors_results <- calculate_ors(ccs_results)
+
+  # Bonferroni
+  sig_bonf <- test_ors_significance(ors_results, p_adjust_method = "bonferroni")
+  expect_true("padj" %in% colnames(sig_bonf))
+  expect_equal(sig_bonf$padj,
+               p.adjust(sig_bonf$pvalue, method = "bonferroni"))
+
+  # holm
+  sig_holm <- test_ors_significance(ors_results, p_adjust_method = "holm")
+  expect_true("padj" %in% colnames(sig_holm))
+  expect_equal(sig_holm$padj,
+               p.adjust(sig_holm$pvalue, method = "holm"))
 })
 
 test_that("calculate_ors validates inputs", {

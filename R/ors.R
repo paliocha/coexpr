@@ -122,33 +122,55 @@ calculate_ors <- function(ccs_results, return_log = TRUE) {
 #'
 #' @param ors_results Data frame from `calculate_ors()`
 #' @param alpha Significance level (default 0.05)
+#' @param p_adjust_method Method for multiple testing correction, passed to
+#'   [stats::p.adjust()]. Default `"BH"` (Benjamini-Hochberg FDR). Use
+#'   `"none"` to skip adjustment and test on raw p-values.
 #'
-#' @return Input data frame with added column `significant` (logical)
+#' @return Input data frame with added columns:
+#'   - `pvalue`: raw empirical p-value (1 - ORS)
+#'   - `padj`: adjusted p-value (only when `p_adjust_method != "none"`)
+#'   - `significant`: logical, TRUE if adjusted p-value < alpha
+#'     (or raw p-value when `p_adjust_method = "none"`)
 #'
 #' @details
 #' The null hypothesis is that the ortholog has no more conserved co-expression
-#' than a random gene pair. This corresponds to ORS = 0.5 (median rank).
+#' than a random gene pair. Under the null, ORS is uniform on \[0, 1\], so the
+#' raw p-value is simply `1 - ORS`.
 #'
-#' The alternative hypothesis is that ORS > 0.5 (better than median).
+#' Because genome-scale analyses test thousands of ortholog pairs
+#' simultaneously, multiple testing correction is applied by default using
+#' the Benjamini-Hochberg procedure to control the false discovery rate.
 #'
 #' @export
-test_ors_significance <- function(ors_results, alpha = 0.05) {
+test_ors_significance <- function(ors_results, alpha = 0.05,
+                                  p_adjust_method = "BH") {
 
   if (!"ORS" %in% colnames(ors_results)) {
     stop("ors_results must contain 'ORS' from calculate_ors()")
   }
 
-  # Calculate empirical P-value: P(ORS >= observed | null: ORS = 0.5)
-  # Under null, ORS should be uniform[0,1], so P-value = 1 - ORS
+  p_adjust_method <- match.arg(p_adjust_method,
+                               choices = stats::p.adjust.methods)
+
+  # Empirical p-value: under null ORS ~ Uniform[0,1], so p = 1 - ORS
   ors_results <- ors_results |>
-    dplyr::mutate(
-      pvalue = 1 - .data$ORS,
-      significant = .data$pvalue < alpha
-    )
+    dplyr::mutate(pvalue = 1 - .data$ORS)
+
+  if (p_adjust_method == "none") {
+    ors_results <- ors_results |>
+      dplyr::mutate(significant = .data$pvalue < alpha)
+  } else {
+    ors_results <- ors_results |>
+      dplyr::mutate(
+        padj = stats::p.adjust(.data$pvalue, method = p_adjust_method),
+        significant = .data$padj < alpha
+      )
+  }
 
   n_sig <- sum(ors_results$significant, na.rm = TRUE)
-  message(sprintf("%d / %d orthologs are significant (alpha = %.3f)",
-                  n_sig, nrow(ors_results), alpha))
+  method_label <- if (p_adjust_method == "none") "unadjusted" else p_adjust_method
+  message(sprintf("%d / %d orthologs are significant (alpha = %.3f, method = %s)",
+                  n_sig, nrow(ors_results), alpha, method_label))
 
   return(ors_results)
 }

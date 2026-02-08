@@ -158,30 +158,33 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
     stop("Strategy 'best_hit' requires similarity_sp1 and similarity_sp2")
   }
 
+  # Type naming convention from detect_ortholog_types:
+  #   "N:1" = n_sp1 > 1 (sp1 gene has N sp2 partners), n_sp2 == 1
+  #   "1:N" = n_sp1 == 1, n_sp2 > 1 (sp2 gene has N sp1 partners)
+
   # For 1:1, keep as is
   orthologs_1to1 <- orthologs |>
     dplyr::filter(.data$type == "1:1")
 
-  # For 1:N (sp1 has one copy, sp2 has multiple)
-  # Select sp2 copy with highest average similarity to sp1
-  orthologs_1toN <- orthologs |>
-    dplyr::filter(.data$type == "1:N") |>
+  # N:1 — sp1 gene has N sp2 partners: pick best sp2 by average similarity
+  orthologs_Nto1 <- orthologs |>
+    dplyr::filter(.data$type == "N:1") |>
     dplyr::group_by(.data$gene_sp1) |>
     dplyr::slice_max(order_by = calculate_avg_similarity(
       .data$gene_sp2, similarity_sp2
     ), n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
 
-  # For N:1 (sp1 has multiple, sp2 has one)
-  orthologs_Nto1 <- orthologs |>
-    dplyr::filter(.data$type == "N:1") |>
+  # 1:N — sp2 gene has N sp1 partners: pick best sp1 by average similarity
+  orthologs_1toN <- orthologs |>
+    dplyr::filter(.data$type == "1:N") |>
     dplyr::group_by(.data$gene_sp2) |>
     dplyr::slice_max(order_by = calculate_avg_similarity(
       .data$gene_sp1, similarity_sp1
     ), n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
 
-  # For N:M, select best reciprocal pair based on combined similarity
+  # N:M — two-pass: best sp2 per sp1, then best sp1 per sp2
   orthologs_NtoM <- orthologs |>
     dplyr::filter(.data$type == "N:M") |>
     dplyr::mutate(
@@ -194,10 +197,10 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
     dplyr::group_by(.data$gene_sp2) |>
     dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
-    dplyr::select(-.data$score)
+    dplyr::select(-"score")
 
   # Combine all
-  dplyr::bind_rows(orthologs_1to1, orthologs_1toN, orthologs_Nto1, orthologs_NtoM)
+  dplyr::bind_rows(orthologs_1to1, orthologs_Nto1, orthologs_1toN, orthologs_NtoM)
 }
 
 
@@ -219,6 +222,11 @@ calculate_avg_similarity <- function(gene, similarity_matrix) {
 
 #' Aggregate multi-copy orthologs by mean CCS
 #'
+#' For 1:N orthologs, averages CCS across sp2 copies (one row per sp1 gene).
+#' For N:1, averages across sp1 copies (one row per sp2 gene).
+#' For N:M, averages across all sp2 copies per sp1 gene, then across
+#' sp1 copies per sp2 gene (two-pass reduction).
+#'
 #' @keywords internal
 #' @noRd
 aggregate_by_mean <- function(orthologs, ccs_values) {
@@ -226,23 +234,65 @@ aggregate_by_mean <- function(orthologs, ccs_values) {
     stop("Strategy 'mean' requires pre-calculated ccs_values")
   }
 
+  # Ensure type detection
+  if (!"type" %in% colnames(orthologs)) {
+    orthologs <- detect_ortholog_types(orthologs)
+  }
+
   # Merge with CCS values
   orthologs_with_ccs <- orthologs |>
     dplyr::left_join(ccs_values, by = c("gene_sp1", "gene_sp2"))
 
-  # For multi-copy, average CCS
-  orthologs_with_ccs |>
+  # 1:1 — keep as-is
+  one_to_one <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "1:1")
+
+  # N:1 — sp1 gene has N sp2 partners: group by gene_sp1, average across sp2 copies
+  n_to_one <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "N:1") |>
     dplyr::group_by(.data$gene_sp1) |>
     dplyr::summarize(
-      gene_sp2 = .data$gene_sp2[1],  # Keep first for simplicity
-      ccs = mean(.data$CCS, na.rm = TRUE),
-      type = "aggregated",
+      gene_sp2 = paste(.data$gene_sp2, collapse = ";"),
+      CCS = mean(.data$CCS, na.rm = TRUE),
+      type = "aggregated_N:1",
       .groups = "drop"
     )
+
+  # 1:N — sp2 gene has N sp1 partners: group by gene_sp2, average across sp1 copies
+  one_to_n <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "1:N") |>
+    dplyr::group_by(.data$gene_sp2) |>
+    dplyr::summarize(
+      gene_sp1 = paste(.data$gene_sp1, collapse = ";"),
+      CCS = mean(.data$CCS, na.rm = TRUE),
+      type = "aggregated_1:N",
+      .groups = "drop"
+    )
+
+  # N:M — average across sp2 copies per sp1 gene
+  n_to_m <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "N:M")
+
+  if (nrow(n_to_m) > 0) {
+    n_to_m <- n_to_m |>
+      dplyr::group_by(.data$gene_sp1) |>
+      dplyr::summarize(
+        gene_sp2 = paste(.data$gene_sp2, collapse = ";"),
+        CCS = mean(.data$CCS, na.rm = TRUE),
+        type = "aggregated_N:M",
+        .groups = "drop"
+      )
+  }
+
+  dplyr::bind_rows(one_to_one, n_to_one, one_to_n, n_to_m)
 }
 
 
 #' Aggregate multi-copy orthologs by max CCS
+#'
+#' For 1:N orthologs, selects the sp2 copy with the highest CCS.
+#' For N:1, selects the sp1 copy with the highest CCS.
+#' For N:M, two-pass selection: best sp2 per sp1, then best sp1 per sp2.
 #'
 #' @keywords internal
 #' @noRd
@@ -251,15 +301,48 @@ aggregate_by_max <- function(orthologs, ccs_values) {
     stop("Strategy 'max' requires pre-calculated ccs_values")
   }
 
+  # Ensure type detection
+  if (!"type" %in% colnames(orthologs)) {
+    orthologs <- detect_ortholog_types(orthologs)
+  }
+
   # Merge with CCS values
   orthologs_with_ccs <- orthologs |>
     dplyr::left_join(ccs_values, by = c("gene_sp1", "gene_sp2"))
 
-  # For each gene in sp1, keep copy with max CCS
-  orthologs_with_ccs |>
+  # 1:1 — keep as-is
+  one_to_one <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "1:1")
+
+  # N:1 — sp1 gene has N sp2 partners: keep best sp2 copy per sp1 gene
+  n_to_one <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "N:1") |>
     dplyr::group_by(.data$gene_sp1) |>
     dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
+
+  # 1:N — sp2 gene has N sp1 partners: keep best sp1 copy per sp2 gene
+  one_to_n <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "1:N") |>
+    dplyr::group_by(.data$gene_sp2) |>
+    dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup()
+
+  # N:M — two-pass: best sp2 per sp1, then best sp1 per sp2
+  n_to_m <- orthologs_with_ccs |>
+    dplyr::filter(.data$type == "N:M")
+
+  if (nrow(n_to_m) > 0) {
+    n_to_m <- n_to_m |>
+      dplyr::group_by(.data$gene_sp1) |>
+      dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
+      dplyr::ungroup() |>
+      dplyr::group_by(.data$gene_sp2) |>
+      dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
+      dplyr::ungroup()
+  }
+
+  dplyr::bind_rows(one_to_one, one_to_n, n_to_one, n_to_m)
 }
 
 

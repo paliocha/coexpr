@@ -257,30 +257,19 @@ setMethod("[", c("TriSimilarity", "ANY", "ANY"),
       return(x@data[idx])
     }
 
-    # Multiple elements - build result matrix
-    result <- matrix(NA_real_, nrow = length(i), ncol = length(j))
+    # Vectorized multi-element access
+    rows_exp <- rep(i, times = length(j))
+    cols_exp <- rep(j, each = length(i))
 
-    for (ri in seq_along(i)) {
-      for (ci in seq_along(j)) {
-        ii <- i[ri]
-        jj <- j[ci]
+    is_diag <- rows_exp == cols_exp
+    ii <- pmin(rows_exp, cols_exp)
+    jj <- pmax(rows_exp, cols_exp)
 
-        if (ii == jj) {
-          result[ri, ci] <- x@diag_value
-        } else {
-          # Ensure ii_ord < jj_ord
-          ii_ord <- min(ii, jj)
-          jj_ord <- max(ii, jj)
-          idx <- (jj_ord - 1) * (jj_ord - 2) / 2 + ii_ord
-          result[ri, ci] <- x@data[idx]
-        }
-      }
-    }
+    idx <- (jj - 1L) * (jj - 2L) / 2L + ii
+    values <- x@data[idx]
+    values[is_diag] <- x@diag_value
 
-    if (drop && length(i) == 1 && length(j) == 1) {
-      return(result[1, 1])
-    }
-
+    result <- matrix(values, nrow = length(i), ncol = length(j))
     rownames(result) <- x@genes[i]
     colnames(result) <- x@genes[j]
     result
@@ -340,20 +329,16 @@ setMethod("extractColumn", "TriSimilarity", function(x, gene) {
   # Diagonal
   col[j] <- x@diag_value
 
-  # Values where row < j (in upper triangle)
-  if (j > 1) {
-    for (i in seq_len(j - 1)) {
-      idx <- (j - 1) * (j - 2) / 2 + i
-      col[i] <- x@data[idx]
-    }
+  # Values where row < j (in upper triangle): index = (j-1)*(j-2)/2 + row
+  if (j > 1L) {
+    rows_above <- seq_len(j - 1L)
+    col[rows_above] <- x@data[(j - 1L) * (j - 2L) / 2L + rows_above]
   }
 
-  # Values where row > j (mirror from upper triangle)
+  # Values where row > j (mirror from upper triangle): index = (row-1)*(row-2)/2 + j
   if (j < n) {
-    for (i in seq(j + 1, n)) {
-      idx <- (i - 1) * (i - 2) / 2 + j
-      col[i] <- x@data[idx]
-    }
+    rows_below <- seq.int(j + 1L, n)
+    col[rows_below] <- x@data[(rows_below - 1L) * (rows_below - 2L) / 2L + j]
   }
 
   names(col) <- x@genes
