@@ -399,3 +399,45 @@ Rcpp::List mutual_rank_transform_tri_cpp(const arma::mat& sim_pcc, int n_cores =
         Rcpp::Named("diag_value") = 1.0
     );
 }
+
+
+//' Extract upper triangle from a symmetric matrix
+//'
+//' Copies the upper triangle (excluding diagonal) in column-major order,
+//' avoiding the R-level overhead of \code{which(upper.tri())} which
+//' allocates a logical matrix and an index vector.
+//'
+//' @param mat Symmetric numeric matrix (n x n)
+//' @return List with components:
+//'   - data: numeric vector of upper triangle values (column-major)
+//'   - n: number of rows/columns
+//'   - diag_value: value of the first diagonal element (assumed constant)
+//'
+//' @keywords internal
+// [[Rcpp::export]]
+Rcpp::List extract_upper_tri_cpp(const arma::mat& mat) {
+    const uword n = mat.n_rows;
+
+    if (n != mat.n_cols) {
+        stop("mat must be a square matrix");
+    }
+
+    uword tri_size = n * (n - 1) / 2;
+    arma::vec upper_tri(tri_size);
+
+    // Column-major order: for each column j, copy rows 0..j-1
+    for (uword j = 1; j < n; ++j) {
+        uword col_start = j * (j - 1) / 2;
+        for (uword i = 0; i < j; ++i) {
+            upper_tri(col_start + i) = mat(i, j);
+        }
+    }
+
+    double diag_val = (n > 0) ? mat(0, 0) : 1.0;
+
+    return Rcpp::List::create(
+        Rcpp::Named("data") = upper_tri,
+        Rcpp::Named("n") = n,
+        Rcpp::Named("diag_value") = diag_val
+    );
+}

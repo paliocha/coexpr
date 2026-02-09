@@ -200,3 +200,20 @@ mutual_rank_transform_tri_cpp <- function(sim_pcc, n_cores = 1L) {
     .Call(`_coexpr_mutual_rank_transform_tri_cpp`, sim_pcc, n_cores)
 }
 
+#' Extract upper triangle from a symmetric matrix
+#'
+#' Copies the upper triangle (excluding diagonal) in column-major order,
+#' avoiding the R-level overhead of \code{which(upper.tri())} which
+#' allocates a logical matrix and an index vector.
+#'
+#' @param mat Symmetric numeric matrix (n x n)
+#' @return List with components:
+#'   - data: numeric vector of upper triangle values (column-major)
+#'   - n: number of rows/columns
+#'   - diag_value: value of the first diagonal element (assumed constant)
+#'
+#' @keywords internal
+extract_upper_tri_cpp <- function(mat) {
+    .Call(`_coexpr_extract_upper_tri_cpp`, mat)
+}
+

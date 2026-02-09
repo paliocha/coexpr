@@ -154,6 +154,17 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// extract_upper_tri_cpp
+Rcpp::List extract_upper_tri_cpp(const arma::mat& mat);
+RcppExport SEXP _coexpr_extract_upper_tri_cpp(SEXP matSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type mat(matSEXP);
+    rcpp_result_gen = Rcpp::wrap(extract_upper_tri_cpp(mat));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_coexpr_discretize_equalfreq_cpp", (DL_FUNC) &_coexpr_discretize_equalfreq_cpp, 2},
@@ -168,6 +179,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coexpr_has_openmp", (DL_FUNC) &_coexpr_has_openmp, 0},
     {"_coexpr_get_max_threads", (DL_FUNC) &_coexpr_get_max_threads, 0},
     {"_coexpr_mutual_rank_transform_tri_cpp", (DL_FUNC) &_coexpr_mutual_rank_transform_tri_cpp, 2},
+    {"_coexpr_extract_upper_tri_cpp", (DL_FUNC) &_coexpr_extract_upper_tri_cpp, 1},
     {NULL, NULL, 0}
 };
 

@@ -135,21 +135,15 @@ as.TriSimilarity <- function(mat) {
     stop("mat must be square")
   }
 
-  n <- nrow(mat)
   genes <- rownames(mat)
-
   if (is.null(genes)) {
-    genes <- paste0("Gene", seq_len(n))
+    genes <- paste0("Gene", seq_len(nrow(mat)))
   }
 
-  # Assume constant diagonal
-  diag_val <- mat[1, 1]
+  # Extract upper triangle via C++ (avoids allocating n×n logical + index vectors)
+  tri_data <- extract_upper_tri_cpp(mat)
 
-  # Extract upper triangle (excluding diagonal) in column-major order
-  upper_idx <- which(upper.tri(mat))
-  data <- mat[upper_idx]
-
-  TriSimilarity(data, genes, diag_val)
+  TriSimilarity(tri_data$data, genes, tri_data$diag_value)
 }
 
 
@@ -162,12 +156,14 @@ setMethod("as.matrix", "TriSimilarity", function(x, ...) {
   mat <- matrix(x@diag_value, nrow = n, ncol = n)
   rownames(mat) <- colnames(mat) <- x@genes
 
-  # Fill upper triangle
-  upper_idx <- which(upper.tri(mat))
-  mat[upper_idx] <- x@data
-
-  # Mirror to lower triangle
-  mat[lower.tri(mat)] <- t(mat)[lower.tri(mat)]
+  # Fill both triangles via direct indexing (avoids upper.tri/lower.tri allocations)
+  for (j in seq.int(2L, n)) {
+    col_start <- (j - 1L) * (j - 2L) / 2L
+    rows <- seq_len(j - 1L)
+    vals <- x@data[col_start + rows]
+    mat[rows, j] <- vals
+    mat[j, rows] <- vals
+  }
 
   mat
 })
