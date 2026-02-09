@@ -214,12 +214,10 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
     coexpr
   }
 
-  # Determine correlation method based on diagonal handling
-  cor_use <- if (handle_self_diagonal == "na") {
-    "pairwise.complete.obs"
-  } else {
-    "everything"
-  }
+  # Always use pairwise.complete.obs to handle NaN values from zero-variance
+
+  # genes in raw PCC/SCC similarity matrices
+  cor_use <- "pairwise.complete.obs"
 
   # Calculate CCS for each ortholog pair
   if (n_cores > 1) {
@@ -302,104 +300,30 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
       )
 
   } else {
-    # Sequential computation
+    # Sequential computation — same pattern as parallel path
+    ccs_values <- vapply(
+      seq_len(n_pairs),
+      function(i) {
+        gene_sp1 <- orthologs_filt$gene_sp1[i]
+        gene_sp2 <- orthologs_filt$gene_sp2[i]
+
+        coexpr_sp1 <- extract_sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
+        coexpr_sp2 <- extract_sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
+
+        coexpr_sp1 <- handle_diagonal(coexpr_sp1, gene_sp1, ref_genes_sp1, handle_self_diagonal)
+        coexpr_sp2 <- handle_diagonal(coexpr_sp2, gene_sp2, ref_genes_sp2, handle_self_diagonal)
+
+        stats::cor(coexpr_sp1, coexpr_sp2, method = "pearson", use = cor_use)
+      },
+      numeric(1)
+    )
+
     ccs_results <- orthologs_filt |>
-      dplyr::rowwise() |>
       dplyr::mutate(
-        CCS = calculate_ccs_pair_internal(
-          .data$gene_sp1, .data$gene_sp2,
-          sim_sp1, sim_sp2,
-          ref_genes_sp1, ref_genes_sp2,
-          handle_self_diagonal, cor_use
-        ),
+        CCS = ccs_values,
         n_ref = n_ref
-      ) |>
-      dplyr::ungroup()
+      )
   }
 
   return(ccs_results)
-}
-
-
-#' Calculate CCS for a single ortholog pair (internal)
-#'
-#' @param gene_sp1 Gene ID in species 1
-#' @param gene_sp2 Gene ID in species 2
-#' @param sim_sp1 Similarity matrix for species 1
-#' @param sim_sp2 Similarity matrix for species 2
-#' @param ref_genes_sp1 Reference gene IDs for species 1
-#' @param ref_genes_sp2 Reference gene IDs for species 2
-#' @param handle_self_diagonal Method for diagonal handling
-#' @param cor_use Argument for cor() 'use' parameter
-#'
-#' @return CCS value
-#' @keywords internal
-#' @noRd
-calculate_ccs_pair_internal <- function(gene_sp1, gene_sp2, sim_sp1, sim_sp2,
-                                        ref_genes_sp1, ref_genes_sp2,
-                                        handle_self_diagonal, cor_use) {
-
-  # Helper function to extract column from similarity matrix
-  extract_sim_column <- function(sim, gene) {
-    if (is(sim, "TriSimilarity")) {
-      extractColumn(sim, gene)
-    } else {
-      sim[, gene]
-    }
-  }
-
-  # Helper function to handle self-diagonal
-  handle_diagonal <- function(coexpr, gene, ref_genes, method) {
-    if (method == "none") {
-      return(coexpr)
-    }
-
-    self_idx <- which(ref_genes == gene)
-
-    if (length(self_idx) == 0) {
-      return(coexpr)
-    }
-
-    if (method == "mean") {
-      non_diag_vals <- coexpr[-self_idx]
-      coexpr[self_idx] <- mean(non_diag_vals, na.rm = TRUE)
-    } else if (method == "na") {
-      coexpr[self_idx] <- NA
-    }
-
-    coexpr
-  }
-
-  # Extract co-expression vectors with reference genes
-  coexpr_sp1 <- extract_sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
-  coexpr_sp2 <- extract_sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
-
-  # Handle self-diagonal
-  coexpr_sp1 <- handle_diagonal(coexpr_sp1, gene_sp1, ref_genes_sp1, handle_self_diagonal)
-  coexpr_sp2 <- handle_diagonal(coexpr_sp2, gene_sp2, ref_genes_sp2, handle_self_diagonal)
-
-  # Calculate Pearson correlation
-  ccs <- cor(coexpr_sp1, coexpr_sp2, method = "pearson", use = cor_use)
-
-  return(ccs)
-}
-
-
-#' Calculate CCS for a single ortholog pair (legacy wrapper)
-#'
-#' @param gene_sp1 Gene ID in species 1
-#' @param gene_sp2 Gene ID in species 2
-#' @param sim_sp1 Similarity matrix for species 1
-#' @param sim_sp2 Similarity matrix for species 2
-#' @param ref_orthologs Reference ortholog pairs
-#'
-#' @return CCS value
-#' @keywords internal
-#' @noRd
-calculate_ccs_pair <- function(gene_sp1, gene_sp2, sim_sp1, sim_sp2, ref_orthologs) {
-  calculate_ccs_pair_internal(
-    gene_sp1, gene_sp2, sim_sp1, sim_sp2,
-    ref_orthologs$gene_sp1, ref_orthologs$gene_sp2,
-    "mean", "everything"
-  )
 }

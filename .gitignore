@@ -27,5 +27,9 @@ data-raw/*.rds
 # Generated vignette output
 vignettes/*.html
 
+# R CMD check artifacts
+*.Rcheck/
+*.tar.gz
+
 # Local planning docs
 improvement_plan.md

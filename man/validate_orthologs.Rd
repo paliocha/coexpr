@@ -15,3 +15,4 @@ TRUE if valid, throws error otherwise
 \description{
 Validate ortholog table format
 }
+\keyword{internal}

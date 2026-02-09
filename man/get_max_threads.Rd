@@ -12,3 +12,4 @@ Maximum number of threads available, or 1 if OpenMP not available
 \description{
 Get maximum number of OpenMP threads
 }
+\keyword{internal}

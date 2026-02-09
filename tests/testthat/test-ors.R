@@ -16,14 +16,12 @@ test_that("calculate_ors computes ORS correctly", {
 
   # Check output structure
   expect_true(is.data.frame(ors_results))
-  expect_true("ORS_sp1_to_sp2" %in% colnames(ors_results))
-  expect_true("ORS_sp2_to_sp1" %in% colnames(ors_results))
   expect_true("ORS" %in% colnames(ors_results))
+  expect_false("ORS_sp1_to_sp2" %in% colnames(ors_results))
+  expect_false("ORS_sp2_to_sp1" %in% colnames(ors_results))
   expect_equal(nrow(ors_results), n_orthologs)
 
   # Check ORS values are in [0, 1]
-  expect_true(all(ors_results$ORS_sp1_to_sp2 >= 0 & ors_results$ORS_sp1_to_sp2 <= 1))
-  expect_true(all(ors_results$ORS_sp2_to_sp1 >= 0 & ors_results$ORS_sp2_to_sp1 <= 1))
   expect_true(all(ors_results$ORS >= 0 & ors_results$ORS <= 1))
 
   # Check ORS uses global ranking (proper distribution from 1/n to 1)
@@ -69,7 +67,7 @@ test_that("calculate_ors logORS transformation works", {
   }
 })
 
-test_that("calculate_ors bidirectional scoring works as expected", {
+test_that("calculate_ors directional scoring works with directional = TRUE", {
   # Create asymmetric scenario with enough orthologs (need >= 10)
   ccs_results <- data.frame(
     gene_sp1 = c("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A10", "A10"),
@@ -78,7 +76,11 @@ test_that("calculate_ors bidirectional scoring works as expected", {
     n_ref = 10
   )
 
-  ors_results <- calculate_ors(ccs_results, return_log = FALSE)
+  ors_results <- calculate_ors(ccs_results, return_log = FALSE, directional = TRUE)
+
+  # Directional columns should be present
+  expect_true("ORS_sp1_to_sp2" %in% colnames(ors_results))
+  expect_true("ORS_sp2_to_sp1" %in% colnames(ors_results))
 
   # For A10 (3 copies in sp2), ORS_sp1_to_sp2 should rank among its 3 copies
   a10_orthologs <- ors_results[ors_results$gene_sp1 == "A10", ]

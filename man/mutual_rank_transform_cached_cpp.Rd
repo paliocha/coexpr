@@ -29,3 +29,4 @@ Time complexity: O(n^2 log n) for ranking + O(n^2) for transformation
 Since the input PCC matrix is symmetric, column ranks equal transposed row ranks.
 This allows us to precompute row ranks once and reuse them efficiently.
 }
+\keyword{internal}

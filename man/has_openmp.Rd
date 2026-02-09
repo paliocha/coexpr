@@ -12,3 +12,4 @@ TRUE if OpenMP support is compiled in, FALSE otherwise
 \description{
 Check if OpenMP is available
 }
+\keyword{internal}

@@ -19,3 +19,4 @@ CLR-transformed similarity matrix
 \description{
 Full pipeline: discretize -> MI -> CLR, returning full matrix.
 }
+\keyword{internal}

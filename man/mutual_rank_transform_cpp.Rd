@@ -34,3 +34,4 @@ Where R_ij is the rank of gene j in gene i's correlation row (descending order).
 Since the input PCC matrix is symmetric, we exploit that colRanks(i,j) = rowRanks(j,i).
 This means we only need to compute row ranks for each row.
 }
+\keyword{internal}

@@ -24,3 +24,4 @@ This function computes MI(i,j) = H(i) + H(j) - H(i,j) for all gene pairs.
 The diagonal contains self-information (entropy).
 Parallelized via OpenMP for efficiency.
 }
+\keyword{internal}

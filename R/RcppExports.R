@@ -34,7 +34,7 @@ discretize_matrix_cpp <- function(expr, n_bins, n_cores = 1L) {
 #' The diagonal contains self-information (entropy).
 #' Parallelized via OpenMP for efficiency.
 #'
-#' @export
+#' @keywords internal
 compute_mi_matrix_cpp <- function(expr_disc, n_bins, n_cores = 1L) {
     .Call(`_coexpr_compute_mi_matrix_cpp`, expr_disc, n_bins, n_cores)
 }
@@ -55,7 +55,7 @@ compute_mi_matrix_cpp <- function(expr_disc, n_bins, n_cores = 1L) {
 #' CLR(i,j) = sqrt(max(0, Z_row)^2 + max(0, Z_col)^2)
 #' }
 #'
-#' @export
+#' @keywords internal
 apply_clr_cpp <- function(mi_matrix, n_cores = 1L) {
     .Call(`_coexpr_apply_clr_cpp`, mi_matrix, n_cores)
 }
@@ -69,7 +69,7 @@ apply_clr_cpp <- function(mi_matrix, n_cores = 1L) {
 #' @param n_cores Number of OpenMP threads
 #' @return List with triangular similarity data
 #'
-#' @export
+#' @keywords internal
 compute_mi_clr_tri_cpp <- function(expr, n_bins, n_cores = 1L) {
     .Call(`_coexpr_compute_mi_clr_tri_cpp`, expr, n_bins, n_cores)
 }
@@ -83,7 +83,7 @@ compute_mi_clr_tri_cpp <- function(expr, n_bins, n_cores = 1L) {
 #' @param n_cores Number of OpenMP threads
 #' @return CLR-transformed similarity matrix
 #'
-#' @export
+#' @keywords internal
 compute_mi_clr_cpp <- function(expr, n_bins, n_cores = 1L) {
     .Call(`_coexpr_compute_mi_clr_cpp`, expr, n_bins, n_cores)
 }
@@ -124,7 +124,7 @@ compute_ranks_desc_cpp <- function(x) {
 #' Since the input PCC matrix is symmetric, we exploit that colRanks(i,j) = rowRanks(j,i).
 #' This means we only need to compute row ranks for each row.
 #'
-#' @export
+#' @keywords internal
 mutual_rank_transform_cpp <- function(sim_pcc, n_cores = 1L) {
     .Call(`_coexpr_mutual_rank_transform_cpp`, sim_pcc, n_cores)
 }
@@ -149,7 +149,7 @@ mutual_rank_transform_cpp <- function(sim_pcc, n_cores = 1L) {
 #' Since the input PCC matrix is symmetric, column ranks equal transposed row ranks.
 #' This allows us to precompute row ranks once and reuse them efficiently.
 #'
-#' @export
+#' @keywords internal
 mutual_rank_transform_cached_cpp <- function(sim_pcc, n_cores = 1L) {
     .Call(`_coexpr_mutual_rank_transform_cached_cpp`, sim_pcc, n_cores)
 }
@@ -157,7 +157,7 @@ mutual_rank_transform_cached_cpp <- function(sim_pcc, n_cores = 1L) {
 #' Check if OpenMP is available
 #'
 #' @return TRUE if OpenMP support is compiled in, FALSE otherwise
-#' @export
+#' @keywords internal
 has_openmp <- function() {
     .Call(`_coexpr_has_openmp`)
 }
@@ -165,7 +165,7 @@ has_openmp <- function() {
 #' Get maximum number of OpenMP threads
 #'
 #' @return Maximum number of threads available, or 1 if OpenMP not available
-#' @export
+#' @keywords internal
 get_max_threads <- function() {
     .Call(`_coexpr_get_max_threads`)
 }
@@ -195,7 +195,7 @@ get_max_threads <- function() {
 #' For positions (i,j) with i < j, elements are ordered by increasing j,
 #' then by increasing i within each column.
 #'
-#' @export
+#' @keywords internal
 mutual_rank_transform_tri_cpp <- function(sim_pcc, n_cores = 1L) {
     .Call(`_coexpr_mutual_rank_transform_tri_cpp`, sim_pcc, n_cores)
 }

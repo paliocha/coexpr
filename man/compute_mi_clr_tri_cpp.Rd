@@ -19,3 +19,4 @@ List with triangular similarity data
 \description{
 Full pipeline: discretize -> MI -> CLR, returning triangular format.
 }
+\keyword{internal}

@@ -94,7 +94,7 @@ handle_multicopy_orthologs <- function(orthologs,
     "best_hit" = select_best_hits(orthologs, similarity_sp1, similarity_sp2),
     "mean" = aggregate_by_mean(orthologs, ccs_values),
     "max" = aggregate_by_max(orthologs, ccs_values),
-    "all_pairs" = keep_all_pairs(orthologs)
+    "all_pairs" = orthologs
   )
 
   message(sprintf("Strategy '%s': Retained %d / %d ortholog pairs",
@@ -209,10 +209,21 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
 #' @keywords internal
 #' @noRd
 calculate_avg_similarity <- function(gene, similarity_matrix) {
+  # Get gene names depending on object type
+  sim_genes <- if (is(similarity_matrix, "TriSimilarity")) {
+    similarity_matrix@genes
+  } else {
+    rownames(similarity_matrix)
+  }
+
   # Vectorize for use with dplyr
   vapply(gene, function(g) {
-    if (g %in% rownames(similarity_matrix)) {
-      mean(similarity_matrix[g, ], na.rm = TRUE)
+    if (g %in% sim_genes) {
+      if (is(similarity_matrix, "TriSimilarity")) {
+        mean(extractColumn(similarity_matrix, g), na.rm = TRUE)
+      } else {
+        mean(similarity_matrix[g, ], na.rm = TRUE)
+      }
     } else {
       0
     }
@@ -343,14 +354,4 @@ aggregate_by_max <- function(orthologs, ccs_values) {
   }
 
   dplyr::bind_rows(one_to_one, one_to_n, n_to_one, n_to_m)
-}
-
-
-#' Keep all ortholog pairs
-#'
-#' @keywords internal
-#' @noRd
-keep_all_pairs <- function(orthologs) {
-  # Already have all pairs, just return
-  orthologs
 }

@@ -95,7 +95,7 @@ arma::vec compute_ranks_desc_cpp(const arma::vec& x) {
 //' Since the input PCC matrix is symmetric, we exploit that colRanks(i,j) = rowRanks(j,i).
 //' This means we only need to compute row ranks for each row.
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat mutual_rank_transform_cpp(const arma::mat& sim_pcc, int n_cores = 1) {
     const uword n = sim_pcc.n_rows;
@@ -200,7 +200,7 @@ arma::mat mutual_rank_transform_cpp(const arma::mat& sim_pcc, int n_cores = 1) {
 //' Since the input PCC matrix is symmetric, column ranks equal transposed row ranks.
 //' This allows us to precompute row ranks once and reuse them efficiently.
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat mutual_rank_transform_cached_cpp(const arma::mat& sim_pcc, int n_cores = 1) {
     const uword n = sim_pcc.n_rows;
@@ -273,7 +273,7 @@ arma::mat mutual_rank_transform_cached_cpp(const arma::mat& sim_pcc, int n_cores
 //' Check if OpenMP is available
 //'
 //' @return TRUE if OpenMP support is compiled in, FALSE otherwise
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 bool has_openmp() {
 #ifdef _OPENMP
@@ -287,7 +287,7 @@ bool has_openmp() {
 //' Get maximum number of OpenMP threads
 //'
 //' @return Maximum number of threads available, or 1 if OpenMP not available
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 int get_max_threads() {
 #ifdef _OPENMP
@@ -323,7 +323,7 @@ int get_max_threads() {
 //' For positions (i,j) with i < j, elements are ordered by increasing j,
 //' then by increasing i within each column.
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 Rcpp::List mutual_rank_transform_tri_cpp(const arma::mat& sim_pcc, int n_cores = 1) {
     const uword n = sim_pcc.n_rows;

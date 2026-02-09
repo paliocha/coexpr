@@ -7,12 +7,15 @@
 #' @param ccs_results Data frame from `calculate_ccs()` with CCS values
 #' @param return_log Logical. If TRUE (default), returns logORS which is more
 #'   suitable for visualization. If FALSE, returns raw ORS proportion.
+#' @param directional Logical. If TRUE, also computes directional ORS columns
+#'   (`ORS_sp1_to_sp2`, `ORS_sp2_to_sp1`) for multi-copy ortholog analysis.
+#'   Default is FALSE.
 #'
 #' @return Input data frame with added columns:
-#'   - `ORS_sp1_to_sp2`: ORS from species 1 perspective (for multi-copy)
-#'   - `ORS_sp2_to_sp1`: ORS from species 2 perspective (for multi-copy)
-#'   - `ORS`: Mean of bidirectional ORS (recommended for analysis)
+#'   - `ORS`: Global rank-based ORS (recommended for analysis)
 #'   - `logORS` (if return_log=TRUE): -log10 transformed ORS
+#'   - `ORS_sp1_to_sp2`, `ORS_sp2_to_sp1` (if directional=TRUE):
+#'     within-group ORS for multi-copy analysis
 #'
 #' @details
 #' ORS is calculated as the proportion of ortholog pairs with CCS less than or
@@ -47,7 +50,7 @@
 #' }
 #'
 #' @export
-calculate_ors <- function(ccs_results, return_log = TRUE) {
+calculate_ors <- function(ccs_results, return_log = TRUE, directional = FALSE) {
 
   if (!"CCS" %in% colnames(ccs_results)) {
     stop("ccs_results must contain 'CCS' column from calculate_ccs()")
@@ -72,36 +75,31 @@ calculate_ors <- function(ccs_results, return_log = TRUE) {
   # The primary metric (ORS) uses GLOBAL ranking for interpretability.
 
   # Global ORS: rank against ALL ortholog pairs
-  global_ranks <- rank(ccs_results$CCS, ties.method = "average")
-  ors_global <- global_ranks / n_total
+  # na.last = "keep" preserves NA for pairs with missing CCS
+  global_ranks <- rank(ccs_results$CCS, ties.method = "average", na.last = "keep")
+  ors_global <- global_ranks / sum(!is.na(ccs_results$CCS))
 
-  # Also compute directional ORS for multi-copy analysis
-  # Species 1 -> 2: For each gene in sp1, rank among all its ortholog pairs
-  ors_sp1_to_sp2 <- ccs_results |>
-    dplyr::group_by(.data$gene_sp1) |>
-    dplyr::mutate(
-      ORS_sp1_to_sp2 = rank(.data$CCS, ties.method = "average") / dplyr::n()
-    ) |>
-    dplyr::ungroup() |>
-    dplyr::pull(.data$ORS_sp1_to_sp2)
-
-  # Species 2 -> 1: For each gene in sp2, rank among all its ortholog pairs
-  ors_sp2_to_sp1 <- ccs_results |>
-    dplyr::group_by(.data$gene_sp2) |>
-    dplyr::mutate(
-      ORS_sp2_to_sp1 = rank(.data$CCS, ties.method = "average") / dplyr::n()
-    ) |>
-    dplyr::ungroup() |>
-    dplyr::pull(.data$ORS_sp2_to_sp1)
-
-  # Combine results
   ors_results <- ccs_results |>
-    dplyr::mutate(
-      ORS_sp1_to_sp2 = ors_sp1_to_sp2,
-      ORS_sp2_to_sp1 = ors_sp2_to_sp1,
-      # Use global ORS as the primary metric for interpretability
-      ORS = ors_global
-    )
+    dplyr::mutate(ORS = ors_global)
+
+  # Optionally compute directional ORS for multi-copy analysis
+  if (directional) {
+    # Species 1 -> 2: For each gene in sp1, rank among all its ortholog pairs
+    ors_results <- ors_results |>
+      dplyr::group_by(.data$gene_sp1) |>
+      dplyr::mutate(
+        ORS_sp1_to_sp2 = rank(.data$CCS, ties.method = "average") / dplyr::n()
+      ) |>
+      dplyr::ungroup()
+
+    # Species 2 -> 1: For each gene in sp2, rank among all its ortholog pairs
+    ors_results <- ors_results |>
+      dplyr::group_by(.data$gene_sp2) |>
+      dplyr::mutate(
+        ORS_sp2_to_sp1 = rank(.data$CCS, ties.method = "average") / dplyr::n()
+      ) |>
+      dplyr::ungroup()
+  }
 
   # Log transformation for better visualization
   if (return_log) {

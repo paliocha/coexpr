@@ -130,19 +130,9 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
     cached <- cache_load(cache_dir, cache_key)
     if (!is.null(cached)) {
       message("Loading cached similarity matrix...")
-      if (!return_tri) {
-        return(as.matrix(cached))
-      }
+      if (!return_tri) return(as.matrix(cached))
       return(cached)
     }
-  }
-
-  # Helper to save result before returning
-  maybe_cache <- function(result) {
-    if (!is.null(cache_dir) && !is.null(cache_key)) {
-      cache_save(result, cache_dir, cache_key)
-    }
-    result
   }
 
   # Validate input
@@ -156,9 +146,6 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
   n_genes <- nrow(expr_matrix)
 
   # Calculate correlation matrix
-  # Note: We avoid furrr/future here as it spawns separate processes that
-  # copy the expression matrix, causing high memory usage. Rfast::cora is
-  # already highly optimized and fast enough for most matrices.
   cor_label <- switch(cor_method,
     pearson = "Pearson",
     spearman = "Spearman",
@@ -169,11 +156,9 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
   if (cor_method == "pearson") {
     sim_pcc <- Rfast::cora(t(expr_matrix))
   } else if (cor_method == "spearman") {
-    # Spearman = Pearson on ranks, so rank-transform then use fast Rfast::cora
     ranked <- t(apply(expr_matrix, 1, rank))
     sim_pcc <- Rfast::cora(t(ranked))
   } else {
-    # Kendall: no fast shortcut, use stats::cor
     if (n_genes > 500) {
       warning(
         sprintf(
@@ -193,59 +178,57 @@ calculate_pcc_mr <- function(expr_matrix, method = c("pcc_mr", "pcc"),
   colnames(sim_pcc) <- rownames(expr_matrix)
 
   if (method == "pcc") {
-    if (return_tri) {
-      return(maybe_cache(as.TriSimilarity(sim_pcc)))
-    } else {
-      return(maybe_cache(sim_pcc))
-    }
-  }
-
-  # Apply mutual rank normalization using C++ implementation
-  if (has_openmp()) {
-    effective_cores <- min(n_cores, get_max_threads())
+    result <- sim_pcc
   } else {
-    effective_cores <- 1
+    # Apply mutual rank normalization using C++ implementation
+    if (has_openmp()) {
+      effective_cores <- min(n_cores, get_max_threads())
+    } else {
+      effective_cores <- 1
+    }
+
+    if (mr_method == "cached") {
+      if (effective_cores > 1) {
+        message(sprintf("Applying mutual rank normalization (C++ cached, %d cores)...", effective_cores))
+      } else {
+        message("Applying mutual rank normalization (C++ cached)...")
+      }
+
+      if (return_tri) {
+        tri_data <- mutual_rank_transform_tri_cpp(sim_pcc, effective_cores)
+        result <- TriSimilarity(
+          data = tri_data$data,
+          genes = rownames(expr_matrix),
+          diag_value = tri_data$diag_value
+        )
+      } else {
+        result <- mutual_rank_transform_cached_cpp(sim_pcc, effective_cores)
+        rownames(result) <- rownames(expr_matrix)
+        colnames(result) <- rownames(expr_matrix)
+      }
+    } else {
+      if (effective_cores > 1) {
+        message(sprintf("Applying mutual rank normalization (C++ streaming, %d cores)...", effective_cores))
+      } else {
+        message("Applying mutual rank normalization (C++ streaming)...")
+      }
+      result <- mutual_rank_transform_cpp(sim_pcc, effective_cores)
+      rownames(result) <- rownames(expr_matrix)
+      colnames(result) <- rownames(expr_matrix)
+    }
   }
 
-  if (mr_method == "cached") {
-    # Cached method: precompute all row ranks, faster but uses O(n^2) extra memory
-    if (effective_cores > 1) {
-      message(sprintf("Applying mutual rank normalization (C++ cached, %d cores)...", effective_cores))
-    } else {
-      message("Applying mutual rank normalization (C++ cached)...")
-    }
-
-    if (return_tri) {
-      # Use triangular output function for memory efficiency
-      result <- mutual_rank_transform_tri_cpp(sim_pcc, effective_cores)
-      return(maybe_cache(TriSimilarity(
-        data = result$data,
-        genes = rownames(expr_matrix),
-        diag_value = result$diag_value
-      )))
-    } else {
-      sim_pcc_mr <- mutual_rank_transform_cached_cpp(sim_pcc, effective_cores)
-    }
-  } else {
-    # Streaming method: compute ranks on-demand, slower but memory-efficient
-    if (effective_cores > 1) {
-      message(sprintf("Applying mutual rank normalization (C++ streaming, %d cores)...", effective_cores))
-    } else {
-      message("Applying mutual rank normalization (C++ streaming)...")
-    }
-    sim_pcc_mr <- mutual_rank_transform_cpp(sim_pcc, effective_cores)
-
-    if (return_tri) {
-      rownames(sim_pcc_mr) <- rownames(expr_matrix)
-      colnames(sim_pcc_mr) <- rownames(expr_matrix)
-      return(maybe_cache(as.TriSimilarity(sim_pcc_mr)))
-    }
+  # Convert to TriSimilarity if requested and not already
+  if (return_tri && is.matrix(result)) {
+    result <- as.TriSimilarity(result)
   }
 
-  rownames(sim_pcc_mr) <- rownames(expr_matrix)
-  colnames(sim_pcc_mr) <- rownames(expr_matrix)
+  # Cache and return
+  if (!is.null(cache_dir) && !is.null(cache_key)) {
+    cache_save(result, cache_dir, cache_key)
+  }
 
-  return(maybe_cache(sim_pcc_mr))
+  result
 }
 
 
@@ -346,14 +329,6 @@ calculate_mi_clr <- function(expr_matrix,
     }
   }
 
-  # Helper to save result before returning
-  maybe_cache <- function(result) {
-    if (!is.null(cache_dir) && !is.null(cache_key)) {
-      cache_save(result, cache_dir, cache_key)
-    }
-    result
-  }
-
   # Validate input
   if (!is.matrix(expr_matrix)) {
     stop("expr_matrix must be a matrix")
@@ -398,45 +373,22 @@ calculate_mi_clr <- function(expr_matrix,
 
   # Call C++ implementation
   if (return_tri) {
-    result <- compute_mi_clr_tri_cpp(expr_matrix, as.integer(n_bins), effective_cores)
-    return(maybe_cache(TriSimilarity(
-      data = result$data,
+    tri_data <- compute_mi_clr_tri_cpp(expr_matrix, as.integer(n_bins), effective_cores)
+    result <- TriSimilarity(
+      data = tri_data$data,
       genes = gene_names,
-      diag_value = result$diag_value
-    )))
+      diag_value = tri_data$diag_value
+    )
   } else {
-    clr_matrix <- compute_mi_clr_cpp(expr_matrix, as.integer(n_bins), effective_cores)
-    rownames(clr_matrix) <- gene_names
-    colnames(clr_matrix) <- gene_names
-    return(maybe_cache(clr_matrix))
-  }
-}
-
-
-#' Validate expression matrix format
-#'
-#' @param expr_matrix Expression matrix to validate
-#' @param name Character name for error messages
-#'
-#' @return TRUE if valid, throws error otherwise
-#' @keywords internal
-#' @noRd
-validate_expr_matrix <- function(expr_matrix, name = "expr_matrix") {
-  if (!is.matrix(expr_matrix)) {
-    stop(sprintf("%s must be a matrix, got %s", name, class(expr_matrix)[1]))
+    result <- compute_mi_clr_cpp(expr_matrix, as.integer(n_bins), effective_cores)
+    rownames(result) <- gene_names
+    colnames(result) <- gene_names
   }
 
-  if (is.null(rownames(expr_matrix))) {
-    stop(sprintf("%s must have rownames (gene IDs)", name))
+  # Cache and return
+  if (!is.null(cache_dir) && !is.null(cache_key)) {
+    cache_save(result, cache_dir, cache_key)
   }
 
-  if (any(duplicated(rownames(expr_matrix)))) {
-    stop(sprintf("%s has duplicated rownames", name))
-  }
-
-  if (ncol(expr_matrix) < 3) {
-    stop(sprintf("%s must have at least 3 samples", name))
-  }
-
-  TRUE
+  result
 }

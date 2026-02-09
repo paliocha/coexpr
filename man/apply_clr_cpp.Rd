@@ -25,3 +25,4 @@ Z_col(i,j) = (MI(i,j) - mean(col_j)) / sd(col_j)
 CLR(i,j) = sqrt(max(0, Z_row)^2 + max(0, Z_col)^2)
 }
 }
+\keyword{internal}

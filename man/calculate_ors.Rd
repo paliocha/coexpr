@@ -4,21 +4,25 @@
 \alias{calculate_ors}
 \title{Calculate ortholog rank score (ORS)}
 \usage{
-calculate_ors(ccs_results, return_log = TRUE)
+calculate_ors(ccs_results, return_log = TRUE, directional = FALSE)
 }
 \arguments{
 \item{ccs_results}{Data frame from \code{calculate_ccs()} with CCS values}
 
 \item{return_log}{Logical. If TRUE (default), returns logORS which is more
 suitable for visualization. If FALSE, returns raw ORS proportion.}
+
+\item{directional}{Logical. If TRUE, also computes directional ORS columns
+(\code{ORS_sp1_to_sp2}, \code{ORS_sp2_to_sp1}) for multi-copy ortholog analysis.
+Default is FALSE.}
 }
 \value{
 Input data frame with added columns:
 \itemize{
-\item \code{ORS_sp1_to_sp2}: ORS from species 1 perspective (for multi-copy)
-\item \code{ORS_sp2_to_sp1}: ORS from species 2 perspective (for multi-copy)
-\item \code{ORS}: Mean of bidirectional ORS (recommended for analysis)
+\item \code{ORS}: Global rank-based ORS (recommended for analysis)
 \item \code{logORS} (if return_log=TRUE): -log10 transformed ORS
+\item \code{ORS_sp1_to_sp2}, \code{ORS_sp2_to_sp1} (if directional=TRUE):
+within-group ORS for multi-copy analysis
 }
 }
 \description{

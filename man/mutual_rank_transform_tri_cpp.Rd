@@ -36,3 +36,4 @@ The upper triangle extraction follows column-major order:
 For positions (i,j) with i < j, elements are ordered by increasing j,
 then by increasing i within each column.
 }
+\keyword{internal}

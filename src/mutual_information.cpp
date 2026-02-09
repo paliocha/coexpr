@@ -166,7 +166,7 @@ inline double compute_mi(const arma::ivec& x, const arma::ivec& y, int n_bins) {
 //' The diagonal contains self-information (entropy).
 //' Parallelized via OpenMP for efficiency.
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat compute_mi_matrix_cpp(const arma::imat& expr_disc, int n_bins, int n_cores = 1) {
     const uword n = expr_disc.n_rows;
@@ -250,7 +250,7 @@ arma::mat compute_mi_matrix_cpp(const arma::imat& expr_disc, int n_bins, int n_c
 //' CLR(i,j) = sqrt(max(0, Z_row)^2 + max(0, Z_col)^2)
 //' }
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat apply_clr_cpp(const arma::mat& mi_matrix, int n_cores = 1) {
     const uword n = mi_matrix.n_rows;
@@ -302,7 +302,7 @@ arma::mat apply_clr_cpp(const arma::mat& mi_matrix, int n_cores = 1) {
 //' @param n_cores Number of OpenMP threads
 //' @return List with triangular similarity data
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 Rcpp::List compute_mi_clr_tri_cpp(const arma::mat& expr, int n_bins, int n_cores = 1) {
     const uword n = expr.n_rows;
@@ -347,7 +347,7 @@ Rcpp::List compute_mi_clr_tri_cpp(const arma::mat& expr, int n_bins, int n_cores
 //' @param n_cores Number of OpenMP threads
 //' @return CLR-transformed similarity matrix
 //'
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat compute_mi_clr_cpp(const arma::mat& expr, int n_bins, int n_cores = 1) {
     Rcpp::Rcout << "Discretizing expression values..." << std::endl;
