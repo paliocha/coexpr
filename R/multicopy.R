@@ -355,3 +355,344 @@ aggregate_by_max <- function(orthologs, ccs_values) {
 
   dplyr::bind_rows(one_to_one, one_to_n, n_to_one, n_to_m)
 }
+
+
+#' Collapse multi-copy orthologs to expand CCS reference set
+#'
+#' For each multi-copy ortholog group, runs a preliminary CCS-like scoring pass
+#' using the existing 1:1 reference set, then selects the best representative
+#' from each group. This expands the reference set while maintaining a proper
+#' bijective (1:1) mapping.
+#'
+#' This is useful when very few genes have clean 1:1 ortholog relationships,
+#' as occurs with polyploids (WGD-derived homeologs) or de novo transcriptome
+#' assemblies (fragmented isoforms).
+#'
+#' @param orthologs Data frame with columns `gene_sp1`, `gene_sp2`, and
+#'   optionally `type` (from `detect_ortholog_types()`).
+#' @param similarity_sp1 Similarity matrix for species 1. Can be a regular
+#'   matrix or a TriSimilarity object.
+#' @param similarity_sp2 Similarity matrix for species 2. Can be a regular
+#'   matrix or a TriSimilarity object.
+#' @param multicopy_sp Character. Which species has the multi-copy issue:
+#'   - `"sp2"` (default): Collapses N:1 groups (sp2 has duplicates, e.g.
+#'     diploid-to-polyploid comparison).
+#'   - `"sp1"`: Collapses 1:N groups (sp1 has duplicates).
+#'   - `"both"`: Collapses both sides sequentially (e.g. two de novo
+#'     transcriptomes). Handles N:M groups via greedy two-pass selection.
+#' @param max_copy_number Integer or NULL. Only collapse groups with at most
+#'   this many copies (default 2L, matching WGD). Set to NULL to collapse all
+#'   group sizes.
+#'
+#' @return Data frame with columns:
+#'   \describe{
+#'     \item{gene_sp1, gene_sp2}{The selected ortholog pair.}
+#'     \item{type}{Set to `"1:1"` for all rows, so collapsed pairs integrate
+#'       seamlessly with [calculate_ccs()] `use_only_1to1 = TRUE`.}
+#'     \item{original_type}{Pre-collapse type: `NA` for natural 1:1 orthologs;
+#'       `"N:1"`, `"1:N"`, or `"N:M"` for collapsed pairs.}
+#'     \item{homeolog_score}{Preliminary CCS score used for selection (`NA` for
+#'       natural 1:1 pairs).}
+#'     \item{n_candidates}{Number of candidates in the group (1 for natural
+#'       1:1 pairs).}
+#'   }
+#'
+#' @details
+#' The scoring function for each candidate pair correlates their co-expression
+#' vectors (restricted to the 1:1 reference genes) across the two species — the
+#' same logic as CCS, but using only the initial 1:1 set as reference.
+#'
+#' **Type convention** (from `detect_ortholog_types()`):
+#' - `"N:1"`: `gene_sp1` appears multiple times (sp1 gene has N sp2 partners).
+#'   Multi-copy is on sp2 side. Group by `gene_sp1` to pick best `gene_sp2`.
+#' - `"1:N"`: `gene_sp2` appears multiple times (sp2 gene has N sp1 partners).
+#'   Multi-copy is on sp1 side. Group by `gene_sp2` to pick best `gene_sp1`.
+#' - `"N:M"`: Both sides have duplicates.
+#'
+#' @examples
+#' \dontrun{
+#' # Collapse N:1 homeologs (diploid vs polyploid)
+#' expanded_ref <- collapse_orthologs(
+#'   orthologs, sim_sp1, sim_sp2,
+#'   multicopy_sp = "sp2", max_copy_number = 2L
+#' )
+#'
+#' # Use expanded reference for CCS
+#' ccs <- calculate_ccs(sim_sp1, sim_sp2, expanded_ref)
+#' }
+#'
+#' @export
+collapse_orthologs <- function(orthologs,
+                               similarity_sp1,
+                               similarity_sp2,
+                               multicopy_sp = c("sp2", "sp1", "both"),
+                               max_copy_number = 2L) {
+
+  multicopy_sp <- match.arg(multicopy_sp)
+
+  # Validate inputs
+  required_cols <- c("gene_sp1", "gene_sp2")
+  if (!all(required_cols %in% colnames(orthologs))) {
+    stop(sprintf("orthologs must have columns: %s",
+                 paste(required_cols, collapse = ", ")))
+  }
+
+  is_valid_sim <- function(x) is.matrix(x) || is(x, "TriSimilarity")
+  if (!is_valid_sim(similarity_sp1) || !is_valid_sim(similarity_sp2)) {
+    stop("similarity_sp1 and similarity_sp2 must be matrices or TriSimilarity objects")
+  }
+
+  # Detect ortholog types if not provided
+  if (!"type" %in% colnames(orthologs)) {
+    orthologs <- detect_ortholog_types(orthologs)
+  }
+
+  # Extract 1:1 orthologs as initial reference set
+  ref_pairs <- orthologs |>
+    dplyr::filter(.data$type == "1:1")
+
+  if (nrow(ref_pairs) == 0) {
+    stop("No 1:1 orthologs found. Cannot build reference set for scoring.")
+  }
+
+  # Get gene names from similarity matrices
+  get_sim_genes <- function(sim) {
+    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
+  }
+
+  genes_sp1 <- get_sim_genes(similarity_sp1)
+  genes_sp2 <- get_sim_genes(similarity_sp2)
+
+  # Filter reference pairs to those present in both similarity matrices
+  ref_pairs <- ref_pairs |>
+    dplyr::filter(.data$gene_sp1 %in% genes_sp1,
+                  .data$gene_sp2 %in% genes_sp2)
+
+  if (nrow(ref_pairs) == 0) {
+    stop("No 1:1 reference orthologs found in similarity matrices.")
+  }
+
+  ref_genes_sp1 <- ref_pairs$gene_sp1
+  ref_genes_sp2 <- ref_pairs$gene_sp2
+
+  # Helper to extract a column from either matrix type or TriSimilarity
+  get_sim_column <- function(sim, gene) {
+    if (is(sim, "TriSimilarity")) {
+      extractColumn(sim, gene)
+    } else {
+      sim[, gene]
+    }
+  }
+
+  # Score a candidate pair using preliminary CCS (correlation of co-expression
+
+  # vectors restricted to the 1:1 reference genes)
+  score_pair <- function(gene_sp1, gene_sp2) {
+    vec1 <- get_sim_column(similarity_sp1, gene_sp1)[ref_genes_sp1]
+    vec2 <- get_sim_column(similarity_sp2, gene_sp2)[ref_genes_sp2]
+    stats::cor(vec1, vec2, use = "pairwise.complete.obs")
+  }
+
+  # Build 1:1 result rows
+  result_1to1 <- ref_pairs |>
+    dplyr::select("gene_sp1", "gene_sp2") |>
+    dplyr::mutate(
+      type = "1:1",
+      original_type = NA_character_,
+      homeolog_score = NA_real_,
+      n_candidates = 1L
+    )
+
+  # Helper to collapse one side of multi-copy groups
+  # group_col: column to group by (the singleton side)
+  # candidate_col: column with duplicates (candidates to pick from)
+  # target_type: ortholog type to filter for (e.g. "N:1", "1:N")
+  collapse_groups <- function(orth, group_col, candidate_col, target_type) {
+    multi <- orth |>
+      dplyr::filter(.data$type == target_type)
+
+    if (nrow(multi) == 0) {
+      return(data.frame(
+        gene_sp1 = character(0), gene_sp2 = character(0),
+        type = character(0), original_type = character(0),
+        homeolog_score = numeric(0), n_candidates = integer(0),
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    # Count candidates per group for max_copy_number filtering
+    group_counts <- multi |>
+      dplyr::count(!!rlang::sym(group_col), name = "n_cand")
+
+    multi <- multi |>
+      dplyr::left_join(group_counts, by = group_col)
+
+    # Apply max_copy_number filter
+    if (!is.null(max_copy_number)) {
+      skipped <- multi |>
+        dplyr::filter(.data$n_cand > max_copy_number)
+      if (nrow(skipped) > 0) {
+        n_groups_skipped <- length(unique(skipped[[group_col]]))
+        message(sprintf(
+          "Skipping %d %s groups with >%d copies",
+          n_groups_skipped, target_type, max_copy_number
+        ))
+      }
+      multi <- multi |>
+        dplyr::filter(.data$n_cand <= max_copy_number)
+    }
+
+    if (nrow(multi) == 0) {
+      return(data.frame(
+        gene_sp1 = character(0), gene_sp2 = character(0),
+        type = character(0), original_type = character(0),
+        homeolog_score = numeric(0), n_candidates = integer(0),
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    # Score each candidate
+    scores <- vapply(seq_len(nrow(multi)), function(i) {
+      g1 <- multi$gene_sp1[i]
+      g2 <- multi$gene_sp2[i]
+
+      # Check both genes exist in similarity matrices
+      if (!(g1 %in% genes_sp1)) {
+        warning(sprintf("Gene '%s' not found in similarity_sp1, skipping", g1))
+        return(NA_real_)
+      }
+      if (!(g2 %in% genes_sp2)) {
+        warning(sprintf("Gene '%s' not found in similarity_sp2, skipping", g2))
+        return(NA_real_)
+      }
+
+      score_pair(g1, g2)
+    }, numeric(1))
+
+    multi$homeolog_score <- scores
+
+    # Select best candidate per group
+    selected <- multi |>
+      dplyr::group_by(!!rlang::sym(group_col)) |>
+      dplyr::filter(!is.na(.data$homeolog_score)) |>
+      dplyr::slice_max(order_by = .data$homeolog_score, n = 1,
+                       with_ties = FALSE) |>
+      dplyr::ungroup()
+
+    # Warn about groups where all candidates had NA scores
+    groups_with_scores <- unique(selected[[group_col]])
+    all_groups <- unique(multi[[group_col]])
+    na_groups <- setdiff(all_groups, groups_with_scores)
+    if (length(na_groups) > 0) {
+      warning(sprintf(
+        "%d %s group(s) skipped: all candidates had NA scores",
+        length(na_groups), target_type
+      ))
+    }
+
+    selected |>
+      dplyr::transmute(
+        gene_sp1 = .data$gene_sp1,
+        gene_sp2 = .data$gene_sp2,
+        type = "1:1",
+        original_type = target_type,
+        homeolog_score = .data$homeolog_score,
+        n_candidates = .data$n_cand
+      )
+  }
+
+  # Collapse depending on multicopy_sp
+  collapsed_parts <- list()
+
+  if (multicopy_sp %in% c("sp2", "both")) {
+    # N:1: gene_sp1 appears multiple times, group by gene_sp1, pick best gene_sp2
+    collapsed_parts$n_to_1 <- collapse_groups(
+      orthologs, "gene_sp1", "gene_sp2", "N:1"
+    )
+  }
+
+  if (multicopy_sp %in% c("sp1", "both")) {
+    # 1:N: gene_sp2 appears multiple times, group by gene_sp2, pick best gene_sp1
+    collapsed_parts$one_to_n <- collapse_groups(
+      orthologs, "gene_sp2", "gene_sp1", "1:N"
+    )
+  }
+
+  if (multicopy_sp == "both") {
+    # N:M: greedy two-pass — best sp2 per sp1, then deduplicate sp2
+    nm_pairs <- orthologs |>
+      dplyr::filter(.data$type == "N:M")
+
+    if (nrow(nm_pairs) > 0) {
+      # Count candidates and apply max_copy_number
+      # For N:M, count unique sp2 per sp1 as proxy for group size
+      if (!is.null(max_copy_number)) {
+        sp2_per_sp1 <- nm_pairs |>
+          dplyr::count(.data$gene_sp1, name = "n_sp2")
+        sp1_per_sp2 <- nm_pairs |>
+          dplyr::count(.data$gene_sp2, name = "n_sp1")
+
+        nm_pairs <- nm_pairs |>
+          dplyr::left_join(sp2_per_sp1, by = "gene_sp1") |>
+          dplyr::left_join(sp1_per_sp2, by = "gene_sp2") |>
+          dplyr::filter(.data$n_sp2 <= max_copy_number,
+                        .data$n_sp1 <= max_copy_number) |>
+          dplyr::select(-"n_sp2", -"n_sp1")
+      }
+
+      if (nrow(nm_pairs) > 0) {
+        # Score all N:M candidates
+        scores <- vapply(seq_len(nrow(nm_pairs)), function(i) {
+          g1 <- nm_pairs$gene_sp1[i]
+          g2 <- nm_pairs$gene_sp2[i]
+          if (!(g1 %in% genes_sp1) || !(g2 %in% genes_sp2)) {
+            return(NA_real_)
+          }
+          score_pair(g1, g2)
+        }, numeric(1))
+
+        nm_pairs$homeolog_score <- scores
+
+        # Pass 1: best sp2 per sp1
+        nm_selected <- nm_pairs |>
+          dplyr::filter(!is.na(.data$homeolog_score)) |>
+          dplyr::group_by(.data$gene_sp1) |>
+          dplyr::slice_max(order_by = .data$homeolog_score, n = 1,
+                           with_ties = FALSE) |>
+          dplyr::ungroup()
+
+        # Pass 2: deduplicate sp2 (best sp1 per sp2)
+        nm_selected <- nm_selected |>
+          dplyr::group_by(.data$gene_sp2) |>
+          dplyr::slice_max(order_by = .data$homeolog_score, n = 1,
+                           with_ties = FALSE) |>
+          dplyr::ungroup()
+
+        collapsed_parts$n_to_m <- nm_selected |>
+          dplyr::transmute(
+            gene_sp1 = .data$gene_sp1,
+            gene_sp2 = .data$gene_sp2,
+            type = "1:1",
+            original_type = "N:M",
+            homeolog_score = .data$homeolog_score,
+            n_candidates = nrow(nm_pairs)
+          )
+      }
+    }
+  }
+
+  # Combine all parts
+  result <- dplyr::bind_rows(c(list(result_1to1), collapsed_parts))
+
+  n_collapsed <- sum(!is.na(result$original_type))
+  if (n_collapsed == 0) {
+    message("No multi-copy groups found to collapse. Returning 1:1 pairs only.")
+  } else {
+    message(sprintf(
+      "Collapsed %d multi-copy groups: %d total pairs (from %d original 1:1)",
+      n_collapsed, nrow(result), nrow(result_1to1)
+    ))
+  }
+
+  result
+}
