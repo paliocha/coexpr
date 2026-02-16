@@ -42,35 +42,3 @@ summarize_conservation <- function(ors_results, by_type = TRUE) {
 
   return(summary_df)
 }
-
-
-#' Validate ortholog table format
-#'
-#' @param orthologs Ortholog data frame to validate
-#'
-#' @return TRUE if valid, throws error otherwise
-#'
-#' @keywords internal
-validate_orthologs <- function(orthologs) {
-
-  if (!is.data.frame(orthologs)) {
-    stop("orthologs must be a data frame")
-  }
-
-  required_cols <- c("gene_sp1", "gene_sp2")
-  missing_cols <- setdiff(required_cols, colnames(orthologs))
-  if (length(missing_cols) > 0) {
-    stop(sprintf("orthologs missing required columns: %s",
-                 paste(missing_cols, collapse = ", ")))
-  }
-
-  if (nrow(orthologs) == 0) {
-    stop("orthologs is empty")
-  }
-
-  if (any(is.na(orthologs$gene_sp1)) || any(is.na(orthologs$gene_sp2))) {
-    stop("orthologs contains NA values in gene columns")
-  }
-
-  TRUE
-}
