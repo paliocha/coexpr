@@ -715,74 +715,112 @@ ggplot(neighborhood_df, aes(x = group, y = jaccard, fill = group)) +
 >
 > This happens when similarity values are relatively uniform across many genes. Small perturbations in co-expression strength can change which genes make the "top-k" cutoff, even when the overall correlation pattern is preserved. Biologically, this suggests the gene maintains *similar co-expression strength* with orthologs (high CCS), but the specific top partners may have diverged or been replaced by species-specific paralogs.
 
-### Heatmap of co-expression similarity for top conserved orthologs
+### Co-expression similarity by ortholog type
 
-Let's visualize the similarity patterns among the most conserved orthologs in both species:
+The following heatmaps show within-species co-expression similarity for genes
+involved in each ortholog relationship type. Conserved co-expression modules
+appear as block-diagonal patterns; similar block structure across the two
+species indicates preserved regulatory neighborhoods. Genes are ordered by
+hierarchical clustering (average linkage on `1 - similarity`).
 
-```{r heatmap_conserved, fig.width=10, fig.height=8}
-# Select top 25 most conserved orthologs
-n_top <- min(25, nrow(top_conserved))
-top_genes <- top_conserved[order(-top_conserved$logORS)[1:n_top], ]
+```{r sim_heatmaps_by_type, fig.width=16, fig.height=9}
+# Convert TriSimilarity to full matrices for subsetting
+mat_bdis <- as.matrix(sim_bdis)
+mat_bsyl <- as.matrix(sim_bsyl)
 
-# Extract similarity submatrices
-genes_sp1 <- top_genes$gene_sp1[top_genes$gene_sp1 %in% rownames(sim_bdis)]
-genes_sp2 <- top_genes$gene_sp2[top_genes$gene_sp2 %in% rownames(sim_bsyl)]
+# Helper: create one co-expression similarity heatmap panel
+make_sim_heatmap <- function(mat, genes, title, show_legend = FALSE) {
+  genes <- genes[genes %in% rownames(mat)]
+  n <- length(genes)
+  if (n < 2) {
+    return(ggplot() +
+      annotate("text", x = 0.5, y = 0.5, label = paste("n =", n)) +
+      theme_void() + labs(title = title))
+  }
+  sub <- mat[genes, genes]
 
-# Use only genes present in both
-n_common <- min(length(genes_sp1), length(genes_sp2), 20)
-genes_sp1 <- genes_sp1[1:n_common]
-genes_sp2 <- genes_sp2[1:n_common]
+  # Hierarchical clustering for gene ordering
+  d <- as.dist(1 - sub)
+  d[is.na(d) | !is.finite(d)] <- 1
+  gene_order <- if (n > 2) genes[hclust(d, method = "average")$order] else genes
 
-sim_sub_bdis <- sim_bdis[genes_sp1, genes_sp1]
-sim_sub_bsyl <- sim_bsyl[genes_sp2, genes_sp2]
-
-# Create combined heatmap data
-library(tidyr)
-
-heatmap_data_bdis <- as.data.frame(sim_sub_bdis)
-heatmap_data_bdis$gene1 <- rownames(heatmap_data_bdis)
-heatmap_data_bdis <- pivot_longer(
-  heatmap_data_bdis,
-  cols = -gene1,
-  names_to = "gene2",
-  values_to = "similarity"
-)
-heatmap_data_bdis$species <- "B. distachyon"
-
-heatmap_data_bsyl <- as.data.frame(sim_sub_bsyl)
-heatmap_data_bsyl$gene1 <- rownames(heatmap_data_bsyl)
-heatmap_data_bsyl <- pivot_longer(
-  heatmap_data_bsyl,
-  cols = -gene1,
-  names_to = "gene2",
-  values_to = "similarity"
-)
-heatmap_data_bsyl$species <- "B. sylvaticum"
-
-# Combined plot
-heatmap_combined <- rbind(heatmap_data_bdis, heatmap_data_bsyl)
-
-ggplot(heatmap_combined, aes(x = gene1, y = gene2, fill = similarity)) +
-  geom_tile() +
-  scale_fill_gradient2(
-    low = "white", mid = "steelblue", high = "darkred",
-    midpoint = 0.5, limits = c(0, 1),
-    name = "PCC+MR\nsimilarity"
-  ) +
-  facet_wrap(~species, scales = "free") +
-  labs(
-    title = "Co-expression similarity among top conserved orthologs",
-    subtitle = "Similar block patterns indicate conserved co-expression modules",
-    x = "", y = ""
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 6),
-    axis.text.y = element_text(size = 6),
-    plot.title = element_text(size = 14, face = "bold"),
-    strip.text = element_text(face = "italic")
+  # Long format (column-major matches row=g1, col=g2)
+  sub_ordered <- sub[gene_order, gene_order]
+  df <- data.frame(
+    g1 = rep(gene_order, times = n),
+    g2 = rep(gene_order, each = n),
+    similarity = as.vector(sub_ordered)
   )
+  df$g1 <- factor(df$g1, levels = gene_order)
+  df$g2 <- factor(df$g2, levels = rev(gene_order))
+
+  p <- ggplot(df, aes(g1, g2, fill = similarity)) +
+    geom_raster() +
+    scale_fill_gradient2(
+      low = "white", mid = "steelblue", high = "darkred",
+      midpoint = 0.5, limits = c(0, 1), name = "PCC+MR\nsimilarity"
+    ) +
+    coord_fixed() +
+    labs(title = title, x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_text(size = 9, hjust = 0.5),
+      plot.margin = margin(2, 2, 2, 2)
+    )
+
+  if (!show_legend) p <- p + theme(legend.position = "none")
+  p
+}
+
+# Build panels for each ortholog type and species
+types <- c("1:1", "1:N", "N:1", "N:M")
+panels <- list()
+col_widths <- numeric(length(types))
+
+for (i in seq_along(types)) {
+  tp <- types[i]
+  orth <- orthologs_all[orthologs_all$type == tp, ]
+  g_bdis <- unique(orth$gene_sp1)
+  g_bsyl <- unique(orth$gene_sp2)
+  n_bdis <- sum(g_bdis %in% rownames(mat_bdis))
+  n_bsyl <- sum(g_bsyl %in% rownames(mat_bsyl))
+
+  panels[[paste0(tp, "_bdis")]] <- make_sim_heatmap(
+    mat_bdis, g_bdis,
+    paste0(tp, " \u2014 B. distachyon (n=", n_bdis, ")")
+  )
+  panels[[paste0(tp, "_bsyl")]] <- make_sim_heatmap(
+    mat_bsyl, g_bsyl,
+    paste0(tp, " \u2014 B. sylvaticum (n=", n_bsyl, ")"),
+    show_legend = (i == length(types))
+  )
+  col_widths[i] <- max(n_bdis, n_bsyl)
+}
+
+# Arrange: columns = ortholog types, rows = species
+# Column widths proportional to gene count so each heatmap fills its cell
+grid.arrange(
+  panels[["1:1_bdis"]], panels[["1:N_bdis"]], panels[["N:1_bdis"]], panels[["N:M_bdis"]],
+  panels[["1:1_bsyl"]], panels[["1:N_bsyl"]], panels[["N:1_bsyl"]], panels[["N:M_bsyl"]],
+  nrow = 2,
+  widths = col_widths,
+  top = grid::textGrob(
+    "Co-expression similarity by ortholog type",
+    gp = grid::gpar(fontsize = 14, fontface = "bold")
+  )
+)
 ```
+
+**Interpretation**: Each column shows one ortholog relationship type; each row
+shows one species. The 1:1 orthologs (leftmost) have the largest matrices and
+typically show the clearest block-diagonal structure, reflecting conserved
+co-expression modules. Multi-copy ortholog types (1:N, N:1, N:M) involve fewer
+genes and may show weaker or more fragmented block structure, consistent with
+expression divergence after gene duplication. Similar patterns across the top
+and bottom rows indicate that co-expression neighborhoods are preserved between
+species.
 
 ### Conservation score distribution by percentile
 
