@@ -653,6 +653,12 @@ collapse_orthologs <- function(orthologs,
 
         nm_pairs$homeolog_score <- scores
 
+        # Count candidates per sp1 gene (for n_candidates metadata)
+        nm_group_counts <- nm_pairs |>
+          dplyr::count(.data$gene_sp1, name = "n_cand")
+        nm_pairs <- nm_pairs |>
+          dplyr::left_join(nm_group_counts, by = "gene_sp1")
+
         # Pass 1: best sp2 per sp1
         nm_selected <- nm_pairs |>
           dplyr::filter(!is.na(.data$homeolog_score)) |>
@@ -675,7 +681,7 @@ collapse_orthologs <- function(orthologs,
             type = "1:1",
             original_type = "N:M",
             homeolog_score = .data$homeolog_score,
-            n_candidates = nrow(nm_pairs)
+            n_candidates = .data$n_cand
           )
       }
     }
