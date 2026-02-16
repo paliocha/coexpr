@@ -235,6 +235,36 @@ test_that("max strategy handles N:M with two-pass selection", {
   expect_true("A2" %in% result$gene_sp1)
 })
 
+test_that("N:M optimal assignment beats greedy when available", {
+  # Adversarial case: greedy picks A1-B1 (0.9) first, then A2 can only get B2 (0.5)
+  # Total greedy = 0.9 + 0.5 = 1.4
+  # Optimal: A1-B2 (0.85) + A2-B1 (0.8) = 1.65
+  orthologs <- data.frame(
+    gene_sp1 = c("A1", "A1", "A2", "A2"),
+    gene_sp2 = c("B1", "B2", "B1", "B2")
+  )
+
+  ccs_values <- data.frame(
+    gene_sp1 = c("A1", "A1", "A2", "A2"),
+    gene_sp2 = c("B1", "B2", "B1", "B2"),
+    CCS = c(0.9, 0.85, 0.8, 0.5)
+  )
+
+  result <- handle_multicopy_orthologs(
+    orthologs, strategy = "max", ccs_values = ccs_values
+  )
+
+  expect_equal(nrow(result), 2)
+
+  if (requireNamespace("clue", quietly = TRUE)) {
+    # Hungarian should find the globally optimal assignment: A1-B2, A2-B1
+    a1_row <- result[result$gene_sp1 == "A1", ]
+    a2_row <- result[result$gene_sp1 == "A2", ]
+    expect_equal(a1_row$gene_sp2, "B2")
+    expect_equal(a2_row$gene_sp2, "B1")
+  }
+})
+
 test_that("max strategy requires ccs_values", {
   orthologs <- data.frame(
     gene_sp1 = c("A1", "A2"),

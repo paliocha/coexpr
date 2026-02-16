@@ -212,18 +212,12 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
     dplyr::ungroup() |>
     dplyr::select(-"score")
 
-  # N:M — two-pass: best sp2 per sp1, then best sp1 per sp2
+  # N:M — optimal 1:1 assignment (Hungarian algorithm or greedy fallback)
   orthologs_NtoM <- multi |>
     dplyr::filter(.data$type == "N:M")
 
   if (nrow(orthologs_NtoM) > 0) {
-    orthologs_NtoM <- orthologs_NtoM |>
-      dplyr::group_by(.data$gene_sp1) |>
-      dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
-      dplyr::ungroup() |>
-      dplyr::group_by(.data$gene_sp2) |>
-      dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
-      dplyr::ungroup() |>
+    orthologs_NtoM <- resolve_nm_optimal(orthologs_NtoM, score_col = "score") |>
       dplyr::select(-"score")
   } else {
     orthologs_NtoM <- orthologs_NtoM |>
@@ -265,6 +259,108 @@ make_pair_scorer <- function(similarity_sp1, similarity_sp2,
     vec2 <- get_col(similarity_sp2, gene_sp2)[ref_genes_sp2]
     stats::cor(vec1, vec2, use = "pairwise.complete.obs")
   }
+}
+
+
+#' Resolve N:M ortholog groups to optimal 1:1 assignments
+#'
+#' Given a data frame of N:M pairs with scores, finds the 1:1 assignment
+#' that maximizes total score. Uses the Hungarian algorithm (via
+#' `clue::solve_LSAP`) when available, otherwise falls back to greedy
+#' two-pass selection.
+#'
+#' @param pairs Data frame with columns `gene_sp1`, `gene_sp2`, and a score
+#'   column named by `score_col`.
+#' @param score_col Character. Name of the score column (default `"score"`).
+#' @return Data frame: one row per assigned pair (subset of input rows).
+#' @keywords internal
+#' @noRd
+resolve_nm_optimal <- function(pairs, score_col = "score") {
+  if (nrow(pairs) == 0) return(pairs)
+
+  # Remove rows with NA scores
+  pairs <- pairs[!is.na(pairs[[score_col]]), ]
+  if (nrow(pairs) == 0) return(pairs)
+
+  sp1_genes <- unique(pairs$gene_sp1)
+  sp2_genes <- unique(pairs$gene_sp2)
+
+  # Trivial cases: 1 gene on either side
+
+  if (length(sp1_genes) == 1 || length(sp2_genes) == 1) {
+    # Just pick best per group
+    if (length(sp1_genes) == 1) {
+      return(pairs[which.max(pairs[[score_col]]), , drop = FALSE])
+    } else {
+      return(pairs[which.max(pairs[[score_col]]), , drop = FALSE])
+    }
+  }
+
+  # Try Hungarian algorithm
+  if (requireNamespace("clue", quietly = TRUE)) {
+    # Build score matrix (sp1 rows x sp2 cols)
+    score_mat <- matrix(-Inf, nrow = length(sp1_genes), ncol = length(sp2_genes))
+    rownames(score_mat) <- sp1_genes
+    colnames(score_mat) <- sp2_genes
+
+    for (i in seq_len(nrow(pairs))) {
+      score_mat[pairs$gene_sp1[i], pairs$gene_sp2[i]] <- pairs[[score_col]][i]
+    }
+
+    # solve_LSAP minimizes cost with non-negative entries, so transform:
+    # cost = max_score - score (large cost for low scores, zero for best)
+    # Replace -Inf with a sentinel before computing max
+    nr <- nrow(score_mat)
+    nc <- ncol(score_mat)
+    finite_scores <- score_mat[is.finite(score_mat)]
+    if (length(finite_scores) == 0) return(pairs[0, , drop = FALSE])
+    max_score <- max(finite_scores)
+
+    cost_mat <- score_mat
+    cost_mat[!is.finite(cost_mat)] <- max_score - 1e6  # will become +1e6 cost
+    cost_mat <- max_score - cost_mat  # now 0 = best, large = worst
+
+    # Pad to square if needed (LSAP requires square matrix)
+    if (nr != nc) {
+      n <- max(nr, nc)
+      padded <- matrix(max(cost_mat) + 1, n, n)  # dummy rows/cols = high cost
+      padded[seq_len(nr), seq_len(nc)] <- cost_mat
+      assignment <- clue::solve_LSAP(padded)
+      assignment <- as.integer(assignment)
+    } else {
+      assignment <- clue::solve_LSAP(cost_mat)
+      assignment <- as.integer(assignment)
+    }
+
+    # Extract valid assignments (within original dimensions and with real scores)
+    selected <- data.frame(
+      gene_sp1 = character(0), gene_sp2 = character(0),
+      stringsAsFactors = FALSE
+    )
+    for (i in seq_len(min(nr, length(assignment)))) {
+      j <- assignment[i]
+      if (j <= nc && score_mat[i, j] > -Inf) {
+        selected <- rbind(selected, data.frame(
+          gene_sp1 = sp1_genes[i], gene_sp2 = sp2_genes[j],
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+
+    # Rejoin with original pairs to preserve all columns
+    result <- dplyr::semi_join(pairs, selected, by = c("gene_sp1", "gene_sp2"))
+    return(result)
+  }
+
+  # Fallback: greedy two-pass
+  result <- pairs |>
+    dplyr::group_by(.data$gene_sp1) |>
+    dplyr::slice_max(order_by = .data[[score_col]], n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::group_by(.data$gene_sp2) |>
+    dplyr::slice_max(order_by = .data[[score_col]], n = 1, with_ties = FALSE) |>
+    dplyr::ungroup()
+  result
 }
 
 
@@ -376,18 +472,15 @@ aggregate_by_max <- function(orthologs, ccs_values) {
     dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
 
-  # N:M — two-pass: best sp2 per sp1, then best sp1 per sp2
+  # N:M — optimal 1:1 assignment (Hungarian algorithm or greedy fallback)
   n_to_m <- orthologs_with_ccs |>
     dplyr::filter(.data$type == "N:M")
 
   if (nrow(n_to_m) > 0) {
     n_to_m <- n_to_m |>
-      dplyr::group_by(.data$gene_sp1) |>
-      dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
-      dplyr::ungroup() |>
-      dplyr::group_by(.data$gene_sp2) |>
-      dplyr::slice_max(order_by = .data$CCS, n = 1, with_ties = FALSE) |>
-      dplyr::ungroup()
+      dplyr::mutate(score = .data$CCS) |>
+      resolve_nm_optimal(score_col = "score") |>
+      dplyr::select(-"score")
   }
 
   dplyr::bind_rows(one_to_one, one_to_n, n_to_one, n_to_m)
@@ -682,20 +775,11 @@ collapse_orthologs <- function(orthologs,
         nm_pairs <- nm_pairs |>
           dplyr::left_join(nm_group_counts, by = "gene_sp1")
 
-        # Pass 1: best sp2 per sp1
+        # Optimal 1:1 assignment (Hungarian algorithm or greedy fallback)
         nm_selected <- nm_pairs |>
-          dplyr::filter(!is.na(.data$homeolog_score)) |>
-          dplyr::group_by(.data$gene_sp1) |>
-          dplyr::slice_max(order_by = .data$homeolog_score, n = 1,
-                           with_ties = FALSE) |>
-          dplyr::ungroup()
-
-        # Pass 2: deduplicate sp2 (best sp1 per sp2)
-        nm_selected <- nm_selected |>
-          dplyr::group_by(.data$gene_sp2) |>
-          dplyr::slice_max(order_by = .data$homeolog_score, n = 1,
-                           with_ties = FALSE) |>
-          dplyr::ungroup()
+          dplyr::mutate(score = .data$homeolog_score) |>
+          resolve_nm_optimal(score_col = "score") |>
+          dplyr::select(-"score")
 
         collapsed_parts$n_to_m <- nm_selected |>
           dplyr::transmute(
