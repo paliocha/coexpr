@@ -300,23 +300,46 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
       )
 
   } else {
-    # Sequential computation — same pattern as parallel path
-    ccs_values <- vapply(
-      seq_len(n_pairs),
-      function(i) {
-        gene_sp1 <- orthologs_filt$gene_sp1[i]
-        gene_sp2 <- orthologs_filt$gene_sp2[i]
+    # Sequential computation — use batch matrix approach when possible
+    # Pre-extract reference submatrices: n_ref x n_pairs
+    if (is(sim_sp1, "TriSimilarity")) {
+      mat_sp1 <- extractRows(sim_sp1, ref_genes_sp1)
+      mat_sp1 <- mat_sp1[, orthologs_filt$gene_sp1, drop = FALSE]
+    } else {
+      mat_sp1 <- sim_sp1[ref_genes_sp1, orthologs_filt$gene_sp1, drop = FALSE]
+    }
 
-        coexpr_sp1 <- extract_sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
-        coexpr_sp2 <- extract_sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
+    if (is(sim_sp2, "TriSimilarity")) {
+      mat_sp2 <- extractRows(sim_sp2, ref_genes_sp2)
+      mat_sp2 <- mat_sp2[, orthologs_filt$gene_sp2, drop = FALSE]
+    } else {
+      mat_sp2 <- sim_sp2[ref_genes_sp2, orthologs_filt$gene_sp2, drop = FALSE]
+    }
 
-        coexpr_sp1 <- handle_diagonal(coexpr_sp1, gene_sp1, ref_genes_sp1, handle_self_diagonal)
-        coexpr_sp2 <- handle_diagonal(coexpr_sp2, gene_sp2, ref_genes_sp2, handle_self_diagonal)
+    # Apply self-diagonal handling per pair
+    if (handle_self_diagonal != "none") {
+      for (i in seq_len(n_pairs)) {
+        mat_sp1[, i] <- handle_diagonal(mat_sp1[, i],
+                                         orthologs_filt$gene_sp1[i],
+                                         ref_genes_sp1,
+                                         handle_self_diagonal)
+        mat_sp2[, i] <- handle_diagonal(mat_sp2[, i],
+                                         orthologs_filt$gene_sp2[i],
+                                         ref_genes_sp2,
+                                         handle_self_diagonal)
+      }
+    }
 
-        stats::cor(coexpr_sp1, coexpr_sp2, method = "pearson", use = cor_use)
-      },
-      numeric(1)
-    )
+    # Batch CCS: column-wise Pearson correlation between paired columns
+    # CCS_i = cor(mat_sp1[,i], mat_sp2[,i])
+    # Vectorized: standardize columns, then element-wise multiply and sum
+    sp1_means <- colMeans(mat_sp1, na.rm = TRUE)
+    sp2_means <- colMeans(mat_sp2, na.rm = TRUE)
+    sp1_centered <- sweep(mat_sp1, 2, sp1_means)
+    sp2_centered <- sweep(mat_sp2, 2, sp2_means)
+    sp1_ss <- sqrt(colSums(sp1_centered^2, na.rm = TRUE))
+    sp2_ss <- sqrt(colSums(sp2_centered^2, na.rm = TRUE))
+    ccs_values <- unname(colSums(sp1_centered * sp2_centered, na.rm = TRUE) / (sp1_ss * sp2_ss))
 
     ccs_results <- orthologs_filt |>
       dplyr::mutate(
