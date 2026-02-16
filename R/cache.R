@@ -17,12 +17,10 @@ compute_cache_key <- function(expr_matrix, method_label, ...) {
   params <- list(...)
 
 
-  # Build content to hash: matrix data + dimensions + names + params
+  # Hash matrix directly — serialization captures data, dims, and names
+  # without the extra as.vector() copy (saves ~16 MB for 10k x 200 matrices)
   key_content <- list(
-    data = as.vector(expr_matrix),
-    dim = dim(expr_matrix),
-    rownames = rownames(expr_matrix),
-    colnames = colnames(expr_matrix),
+    expr_matrix = expr_matrix,
     method_label = method_label,
     params = params
   )
