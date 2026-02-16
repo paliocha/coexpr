@@ -826,6 +826,132 @@ test_that("collapse_orthologs result integrates with calculate_ccs", {
 })
 
 
+# --- Tests for expand_reference_iteratively ---
+
+test_that("expand_reference_iteratively basic expansion works", {
+  set.seed(42)
+  n_sp1 <- 12
+  n_sp2 <- 14
+
+  raw1 <- matrix(stats::runif(n_sp1^2, 0.1, 0.9), n_sp1, n_sp1)
+  sim_sp1 <- (raw1 + t(raw1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", seq_len(n_sp1))
+
+  raw2 <- matrix(stats::runif(n_sp2^2, 0.1, 0.9), n_sp2, n_sp2)
+  sim_sp2 <- (raw2 + t(raw2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", seq_len(n_sp2))
+
+  # 8 natural 1:1 + 2 N:1 groups (2 copies each)
+  orthologs <- data.frame(
+    gene_sp1 = c(paste0("A", 1:8), "A9", "A9", "A10", "A10"),
+    gene_sp2 = c(paste0("B", 1:8), "B9", "B10", "B11", "B12")
+  )
+
+  result <- expand_reference_iteratively(
+    orthologs, sim_sp1, sim_sp2,
+    multicopy_sp = "sp2", max_copy_number = 2L,
+    max_iterations = 3, score_threshold = -1
+  )
+
+  # Should have iteration column
+  expect_true("iteration" %in% colnames(result))
+
+  # Original 1:1 at iteration 0
+  expect_equal(sum(result$iteration == 0), 8)
+
+  # Should have expanded (both groups added)
+  expect_equal(nrow(result), 10)
+
+  # All rows have type == "1:1"
+  expect_true(all(result$type == "1:1"))
+})
+
+test_that("expand_reference_iteratively respects score_threshold", {
+  set.seed(123)
+  n_sp1 <- 10
+  n_sp2 <- 12
+
+  raw1 <- matrix(stats::runif(n_sp1^2, 0.1, 0.9), n_sp1, n_sp1)
+  sim_sp1 <- (raw1 + t(raw1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", seq_len(n_sp1))
+
+  raw2 <- matrix(stats::runif(n_sp2^2, 0.1, 0.9), n_sp2, n_sp2)
+  sim_sp2 <- (raw2 + t(raw2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", seq_len(n_sp2))
+
+  orthologs <- data.frame(
+    gene_sp1 = c(paste0("A", 1:6), "A7", "A7"),
+    gene_sp2 = c(paste0("B", 1:6), "B7", "B8")
+  )
+
+  # Very high threshold — should not add any multi-copy groups
+  result_strict <- expand_reference_iteratively(
+    orthologs, sim_sp1, sim_sp2,
+    multicopy_sp = "sp2", score_threshold = 0.99
+  )
+  expect_equal(nrow(result_strict), 6)
+
+  # Very low threshold — should add the group
+  result_lax <- expand_reference_iteratively(
+    orthologs, sim_sp1, sim_sp2,
+    multicopy_sp = "sp2", score_threshold = -1
+  )
+  expect_equal(nrow(result_lax), 7)
+})
+
+test_that("expand_reference_iteratively integrates with calculate_ccs", {
+  set.seed(99)
+  n_sp1 <- 15
+  n_sp2 <- 17
+
+  raw1 <- matrix(stats::runif(n_sp1^2, 0.1, 0.9), n_sp1, n_sp1)
+  sim_sp1 <- (raw1 + t(raw1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", seq_len(n_sp1))
+
+  raw2 <- matrix(stats::runif(n_sp2^2, 0.1, 0.9), n_sp2, n_sp2)
+  sim_sp2 <- (raw2 + t(raw2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", seq_len(n_sp2))
+
+  orthologs <- data.frame(
+    gene_sp1 = c(paste0("A", 1:10), "A11", "A11", "A12", "A12"),
+    gene_sp2 = c(paste0("B", 1:10), "B11", "B12", "B13", "B14")
+  )
+
+  expanded <- expand_reference_iteratively(
+    orthologs, sim_sp1, sim_sp2,
+    multicopy_sp = "sp2", max_copy_number = 2L,
+    score_threshold = -1
+  )
+
+  ccs_result <- calculate_ccs(sim_sp1, sim_sp2, expanded, use_only_1to1 = TRUE)
+  expect_true(is.data.frame(ccs_result))
+  expect_true(all(!is.na(ccs_result$CCS)))
+  expect_equal(nrow(ccs_result), nrow(expanded))
+})
+
+test_that("expand_reference_iteratively handles no multi-copy groups", {
+  sim_sp1 <- matrix(0.5, 3, 3); diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- c("A1", "A2", "A3")
+  sim_sp2 <- matrix(0.5, 3, 3); diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- c("B1", "B2", "B3")
+
+  orthologs <- data.frame(
+    gene_sp1 = c("A1", "A2", "A3"),
+    gene_sp2 = c("B1", "B2", "B3")
+  )
+
+  result <- expand_reference_iteratively(orthologs, sim_sp1, sim_sp2)
+  expect_equal(nrow(result), 3)
+  expect_true(all(result$iteration == 0))
+})
+
+
 test_that("type column is auto-detected when missing", {
   orthologs <- data.frame(
     gene_sp1 = c("A1", "A2", "A2"),

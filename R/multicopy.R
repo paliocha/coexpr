@@ -809,3 +809,244 @@ collapse_orthologs <- function(orthologs,
 
   result
 }
+
+
+#' Iteratively expand ortholog reference set
+#'
+#' Starts with 1:1 orthologs as the reference set, then iteratively adds
+#' the best multi-copy ortholog representatives. Each iteration re-scores
+#' candidates using the expanded reference from the previous round, so
+#' later additions benefit from a richer reference.
+#'
+#' This is useful when few genes have clean 1:1 relationships (e.g.,
+#' polyploid comparisons) and a single-pass collapse is insufficient.
+#'
+#' @param orthologs Data frame with columns `gene_sp1`, `gene_sp2`, and
+#'   optionally `type`.
+#' @param similarity_sp1,similarity_sp2 Similarity matrices or TriSimilarity
+#'   objects for each species.
+#' @param multicopy_sp Character. Which species has multi-copy genes:
+#'   `"sp2"` (default), `"sp1"`, or `"both"`.
+#' @param max_copy_number Integer or NULL. Only consider groups with at most
+#'   this many copies (default 2L). NULL = no limit.
+#' @param max_iterations Integer. Maximum number of expansion rounds
+#'   (default 5). Iteration stops early if no new pairs are added.
+#' @param score_threshold Numeric. Minimum preliminary CCS (homeolog score)
+#'   required to accept a candidate (default 0.1). Higher values are more
+#'   conservative.
+#'
+#' @return Data frame with the same columns as [collapse_orthologs()], plus
+#'   an `iteration` column indicating when each pair was added (0 = original
+#'   1:1, 1 = first expansion, etc.).
+#'
+#' @details
+#' Algorithm:
+#' 1. Extract 1:1 orthologs as initial reference (iteration 0)
+#' 2. Score all multi-copy candidates against current reference
+#' 3. For each group, select the best candidate above `score_threshold`
+#' 4. Add selected pairs to the reference set
+#' 5. Repeat from step 2 with remaining unassigned groups
+#' 6. Stop when no new pairs are added or `max_iterations` is reached
+#'
+#' @examples
+#' \dontrun{
+#' expanded <- expand_reference_iteratively(
+#'   orthologs, sim_sp1, sim_sp2,
+#'   multicopy_sp = "sp2", max_copy_number = 2L,
+#'   max_iterations = 5, score_threshold = 0.1
+#' )
+#'
+#' ccs <- calculate_ccs(sim_sp1, sim_sp2, expanded)
+#' }
+#'
+#' @export
+expand_reference_iteratively <- function(orthologs,
+                                         similarity_sp1,
+                                         similarity_sp2,
+                                         multicopy_sp = c("sp2", "sp1", "both"),
+                                         max_copy_number = 2L,
+                                         max_iterations = 5L,
+                                         score_threshold = 0.1) {
+
+  multicopy_sp <- match.arg(multicopy_sp)
+
+  # Validate inputs
+  required_cols <- c("gene_sp1", "gene_sp2")
+  if (!all(required_cols %in% colnames(orthologs))) {
+    stop(sprintf("orthologs must have columns: %s",
+                 paste(required_cols, collapse = ", ")))
+  }
+
+  is_valid_sim <- function(x) is.matrix(x) || is(x, "TriSimilarity")
+  if (!is_valid_sim(similarity_sp1) || !is_valid_sim(similarity_sp2)) {
+    stop("similarity_sp1 and similarity_sp2 must be matrices or TriSimilarity objects")
+  }
+
+  if (!"type" %in% colnames(orthologs)) {
+    orthologs <- detect_ortholog_types(orthologs)
+  }
+
+  get_sim_genes <- function(sim) {
+    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
+  }
+  genes_sp1 <- get_sim_genes(similarity_sp1)
+  genes_sp2 <- get_sim_genes(similarity_sp2)
+
+  # Initialize reference with 1:1 orthologs
+  ref_pairs <- orthologs |>
+    dplyr::filter(.data$type == "1:1",
+                  .data$gene_sp1 %in% genes_sp1,
+                  .data$gene_sp2 %in% genes_sp2)
+
+  if (nrow(ref_pairs) == 0) {
+    stop("No 1:1 orthologs found in similarity matrices.")
+  }
+
+  result <- ref_pairs |>
+    dplyr::select("gene_sp1", "gene_sp2") |>
+    dplyr::mutate(
+      type = "1:1",
+      original_type = NA_character_,
+      homeolog_score = NA_real_,
+      n_candidates = 1L,
+      iteration = 0L
+    )
+
+  # Determine which ortholog types to expand
+  target_types <- switch(multicopy_sp,
+    "sp2"  = "N:1",
+    "sp1"  = "1:N",
+    "both" = c("N:1", "1:N")
+  )
+
+  # Build pool of multi-copy candidates
+  candidates <- orthologs |>
+    dplyr::filter(.data$type %in% target_types,
+                  .data$gene_sp1 %in% genes_sp1,
+                  .data$gene_sp2 %in% genes_sp2)
+
+  # Apply max_copy_number filter
+  if (!is.null(max_copy_number) && nrow(candidates) > 0) {
+    for (tt in target_types) {
+      group_col <- if (tt == "N:1") "gene_sp1" else "gene_sp2"
+      group_counts <- candidates |>
+        dplyr::filter(.data$type == tt) |>
+        dplyr::count(!!rlang::sym(group_col), name = "n_cand")
+
+      too_large <- group_counts |>
+        dplyr::filter(.data$n_cand > max_copy_number) |>
+        dplyr::pull(!!rlang::sym(group_col))
+
+      if (length(too_large) > 0) {
+        candidates <- candidates |>
+          dplyr::filter(!(!!rlang::sym(group_col) %in% too_large &
+                            .data$type == tt))
+      }
+    }
+  }
+
+  if (nrow(candidates) == 0) {
+    message("No eligible multi-copy groups. Returning 1:1 pairs only.")
+    return(result)
+  }
+
+  # Compute n_candidates per group
+  # N:1 groups: count per gene_sp1; 1:N groups: count per gene_sp2
+  candidates$n_cand <- vapply(seq_len(nrow(candidates)), function(i) {
+    tt <- candidates$type[i]
+    if (tt == "N:1") {
+      sum(candidates$gene_sp1 == candidates$gene_sp1[i] & candidates$type == tt)
+    } else {
+      sum(candidates$gene_sp2 == candidates$gene_sp2[i] & candidates$type == tt)
+    }
+  }, integer(1))
+
+  # Track which groups have been assigned
+  assigned_groups <- character(0)
+
+  for (iter in seq_len(max_iterations)) {
+    ref_genes_sp1 <- result$gene_sp1
+    ref_genes_sp2 <- result$gene_sp2
+
+    # Score remaining candidates against current reference
+    score_fn <- make_pair_scorer(similarity_sp1, similarity_sp2,
+                                 ref_genes_sp1, ref_genes_sp2)
+
+    remaining <- candidates |>
+      dplyr::filter(!paste(.data$gene_sp1, .data$gene_sp2) %in% assigned_groups)
+
+    if (nrow(remaining) == 0) break
+
+    # Remove candidates whose group is already assigned
+    for (tt in target_types) {
+      group_col <- if (tt == "N:1") "gene_sp1" else "gene_sp2"
+      assigned_in_result <- result[[group_col]]
+      remaining <- remaining |>
+        dplyr::filter(!(!!rlang::sym(group_col) %in% assigned_in_result &
+                          .data$type == tt))
+    }
+
+    if (nrow(remaining) == 0) break
+
+    # Score each candidate
+    remaining$homeolog_score <- vapply(seq_len(nrow(remaining)), function(i) {
+      score_fn(remaining$gene_sp1[i], remaining$gene_sp2[i])
+    }, numeric(1))
+
+    # Select best per group, above threshold
+    new_pairs <- data.frame()
+    for (tt in target_types) {
+      group_col <- if (tt == "N:1") "gene_sp1" else "gene_sp2"
+      type_remaining <- remaining |>
+        dplyr::filter(.data$type == tt, !is.na(.data$homeolog_score),
+                      .data$homeolog_score >= score_threshold)
+
+      if (nrow(type_remaining) > 0) {
+        best <- type_remaining |>
+          dplyr::group_by(!!rlang::sym(group_col)) |>
+          dplyr::slice_max(order_by = .data$homeolog_score, n = 1,
+                           with_ties = FALSE) |>
+          dplyr::ungroup()
+        new_pairs <- dplyr::bind_rows(new_pairs, best)
+      }
+    }
+
+    if (nrow(new_pairs) == 0) {
+      message(sprintf("Iteration %d: no candidates above threshold. Stopping.", iter))
+      break
+    }
+
+    # Add to result
+    new_rows <- new_pairs |>
+      dplyr::transmute(
+        gene_sp1 = .data$gene_sp1,
+        gene_sp2 = .data$gene_sp2,
+        type = "1:1",
+        original_type = .data$type,
+        homeolog_score = .data$homeolog_score,
+        n_candidates = as.integer(.data$n_cand),
+        iteration = iter
+      )
+
+    result <- dplyr::bind_rows(result, new_rows)
+
+    message(sprintf("Iteration %d: added %d pairs (total: %d)",
+                    iter, nrow(new_rows), nrow(result)))
+
+    # Mark these groups as assigned
+    for (tt in target_types) {
+      group_col <- if (tt == "N:1") "gene_sp1" else "gene_sp2"
+      assigned_groups <- c(assigned_groups,
+                           new_pairs[[group_col]][new_pairs$type == tt])
+    }
+  }
+
+  n_expanded <- sum(!is.na(result$original_type))
+  n_iters <- max(result$iteration)
+  message(sprintf(
+    "Reference expansion complete: %d pairs (%d original 1:1 + %d expanded) over %d iteration(s)",
+    nrow(result), sum(result$iteration == 0), n_expanded, n_iters
+  ))
+
+  result
+}
