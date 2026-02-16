@@ -53,5 +53,6 @@ Collate:
     'coexpr-package.R'
     'multicopy.R'
     'ors.R'
+    'plotting.R'
     'similarity.R'
     'utils.R'

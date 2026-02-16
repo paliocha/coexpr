@@ -61,10 +61,54 @@ dim(expr_matrix)           # genes × samples
 head(rownames(expr_matrix)) # gene IDs
 ```
 
-**Recommendations**:
-- Use log-transformed or VST-normalized expression values
-- Remove genes with zero variance or too many missing values
-- Ensure gene IDs match those in your ortholog table
+#### Preprocessing checklist
+
+Co-expression analysis is sensitive to how expression data is prepared. Follow
+these steps before computing similarity matrices:
+
+**1. Normalization**: Choose one of the following (do not combine):
+
+- **VST** (DESeq2 `vst()`): Best for RNA-seq count data. Stabilizes variance
+  across the expression range. Recommended when you have raw counts.
+- **log2(CPM + 1)**: Simpler alternative. Compute counts-per-million first
+  (e.g., via `edgeR::cpm()`), then log-transform. Works well for most cases.
+- **TPM/FPKM**: Acceptable if already provided, but less robust than
+  count-based normalization for co-expression.
+
+Do **not** use rank-based normalization (e.g., quantile normalization across
+genes) -- this destroys the variance structure that correlation depends on.
+
+**2. Filter low-expressed genes**: Genes with very low or zero expression across
+most samples contribute noise, not signal. A common filter:
+
+```{r, eval=FALSE}
+# Keep genes expressed (e.g., > 1 CPM) in at least 20% of samples
+keep <- rowSums(cpm(counts) > 1) >= 0.2 * ncol(counts)
+expr_matrix <- expr_matrix[keep, ]
+```
+
+**3. Remove zero-variance genes**: Genes with identical expression across all
+samples have undefined correlation and will produce `NaN` in similarity
+matrices.
+
+```{r, eval=FALSE}
+gene_vars <- apply(expr_matrix, 1, var)
+expr_matrix <- expr_matrix[gene_vars > 0, ]
+```
+
+**4. Handle batch effects**: If your samples come from multiple studies or
+batches, consider correction with `limma::removeBatchEffect()` or
+`sva::ComBat()` **before** computing similarity. Cross-study data is valuable
+for co-expression (more diverse conditions), but uncorrected batch effects can
+dominate the correlation structure.
+
+**5. Sample diversity**: More diverse conditions improve co-expression
+detection. The paper found diminishing returns after ~100--200 diverse samples.
+Biological replicates from the same condition add less information than samples
+from different tissues, time points, or treatments.
+
+**6. Gene IDs**: Ensure rownames match the gene IDs in your ortholog table
+(check with `intersect(rownames(expr_matrix), orthologs$gene_sp1)`).
 
 ### 2. Ortholog table
 
@@ -231,6 +275,35 @@ The C++ implementation uses OpenMP for parallel computation when available:
 cat("OpenMP available:", has_openmp(), "\n")
 cat("Maximum threads:", get_max_threads(), "\n")
 ```
+
+### Alternative: MI+CLR similarity
+
+The package also provides mutual information with context likelihood ratio
+(MI+CLR) normalization as an alternative to PCC+MR. MI captures nonlinear
+relationships that Pearson correlation misses, while CLR reduces hub-gene bias.
+
+```{r mi_clr_example, eval=FALSE}
+# MI+CLR similarity (requires more samples than PCC+MR)
+sim_mi <- calculate_mi_clr(expr_matrix, n_bins = 10, n_cores = 4)
+```
+
+**Choosing `n_bins`**: The number of discretization bins controls the
+resolution-variance trade-off:
+
+| Samples | Recommended `n_bins` | Rationale |
+|---------|---------------------|-----------|
+| 30--50  | 5                   | Minimum for stable MI estimates |
+| 50--100 | 8--10               | Good balance for most datasets |
+| >100    | 10--15              | Finer resolution justified |
+
+Rule of thumb: use at least 3 samples per bin (`n_samples >= 3 * n_bins`).
+Too many bins relative to samples produces noisy MI estimates.
+
+**When to prefer MI+CLR over PCC+MR**: MI+CLR can detect nonlinear
+co-expression relationships (e.g., switch-like regulation). However, PCC+MR
+consistently outperformed MI+CLR in the Gronvold & Hvidsten benchmarks, so
+use PCC+MR as the default and MI+CLR for sensitivity analysis or when you
+suspect important nonlinear relationships.
 
 ## Step 2: Understanding ortholog types
 

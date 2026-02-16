@@ -1,4 +1,4 @@
-# ---- Cache key determinism ----
+# ---- Cache key determinism & sensitivity ----
 
 test_that("compute_cache_key is deterministic for identical inputs", {
   set.seed(1)
@@ -10,51 +10,28 @@ test_that("compute_cache_key is deterministic for identical inputs", {
   expect_identical(key1, key2)
 })
 
-test_that("cache key changes when expression data changes", {
-  set.seed(1)
-  expr1 <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
-  rownames(expr1) <- paste0("Gene", 1:50)
-
-  expr2 <- expr1
-  expr2[1, 1] <- expr2[1, 1] + 0.001
-  rownames(expr2) <- rownames(expr1)
-
-  key1 <- compute_cache_key(expr1, "pcc_mr", cor_method = "pearson")
-  key2 <- compute_cache_key(expr2, "pcc_mr", cor_method = "pearson")
-  expect_false(key1 == key2)
-})
-
-test_that("cache key changes when method changes", {
+test_that("cache key is sensitive to all relevant inputs", {
   set.seed(1)
   expr <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
   rownames(expr) <- paste0("Gene", 1:50)
 
-  key1 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
-  key2 <- compute_cache_key(expr, "pcc", cor_method = "pearson")
-  expect_false(key1 == key2)
-})
+  baseline <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
 
-test_that("cache key changes when cor_method changes", {
-  set.seed(1)
-  expr <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
-  rownames(expr) <- paste0("Gene", 1:50)
+  # Expression data change
+  expr_mod <- expr
+  expr_mod[1, 1] <- expr_mod[1, 1] + 0.001
+  expect_false(compute_cache_key(expr_mod, "pcc_mr", cor_method = "pearson") == baseline)
 
-  key1 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
-  key2 <- compute_cache_key(expr, "pcc_mr", cor_method = "spearman")
-  expect_false(key1 == key2)
-})
+  # Method label change
+  expect_false(compute_cache_key(expr, "pcc", cor_method = "pearson") == baseline)
 
-test_that("cache key changes when gene names change", {
-  set.seed(1)
-  expr <- matrix(rnorm(50 * 10), nrow = 50, ncol = 10)
-  rownames(expr) <- paste0("Gene", 1:50)
+  # Correlation method change
+  expect_false(compute_cache_key(expr, "pcc_mr", cor_method = "spearman") == baseline)
 
-  expr2 <- expr
-  rownames(expr2) <- paste0("G", 1:50)
-
-  key1 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
-  key2 <- compute_cache_key(expr2, "pcc_mr", cor_method = "pearson")
-  expect_false(key1 == key2)
+  # Gene name change
+  expr_renamed <- expr
+  rownames(expr_renamed) <- paste0("G", 1:50)
+  expect_false(compute_cache_key(expr_renamed, "pcc_mr", cor_method = "pearson") == baseline)
 })
 
 test_that("cache key filename has correct format", {
@@ -69,34 +46,40 @@ test_that("cache key filename has correct format", {
   expect_match(key2, "^mi_clr_10_[0-9a-f]+\\.rds$")
 })
 
+test_that("n_cores does not affect cache key", {
+  set.seed(42)
+  expr <- matrix(rnorm(30 * 10), nrow = 30, ncol = 10)
+  rownames(expr) <- paste0("Gene", 1:30)
+
+  # Keys should be identical regardless of n_cores
+  key1 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
+  key2 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
+  expect_identical(key1, key2)
+  # n_cores is NOT included in the key, so it can't change the key
+})
+
+
 # ---- Cache load/save ----
 
-test_that("cache_save and cache_load round-trip a TriSimilarity object", {
+test_that("cache_save and cache_load round-trip both TriSimilarity and matrix inputs", {
   cache_dir <- withr::local_tempdir()
 
   mat <- matrix(c(1, 0.5, 0.3, 0.5, 1, 0.7, 0.3, 0.7, 1), nrow = 3)
   rownames(mat) <- colnames(mat) <- c("A", "B", "C")
   tri <- as.TriSimilarity(mat)
 
-  cache_save(tri, cache_dir, "test.rds")
-  loaded <- cache_load(cache_dir, "test.rds")
+  # TriSimilarity round-trip
+  cache_save(tri, cache_dir, "test_tri.rds")
+  loaded_tri <- cache_load(cache_dir, "test_tri.rds")
+  expect_s4_class(loaded_tri, "TriSimilarity")
+  expect_equal(loaded_tri@data, tri@data)
+  expect_equal(loaded_tri@genes, tri@genes)
 
-  expect_s4_class(loaded, "TriSimilarity")
-  expect_equal(loaded@data, tri@data)
-  expect_equal(loaded@genes, tri@genes)
-})
-
-test_that("cache_save converts matrix to TriSimilarity before saving", {
-  cache_dir <- withr::local_tempdir()
-
-  mat <- matrix(c(1, 0.5, 0.3, 0.5, 1, 0.7, 0.3, 0.7, 1), nrow = 3)
-  rownames(mat) <- colnames(mat) <- c("A", "B", "C")
-
+  # Matrix auto-conversion round-trip
   cache_save(mat, cache_dir, "test_mat.rds")
-  loaded <- cache_load(cache_dir, "test_mat.rds")
-
-  expect_s4_class(loaded, "TriSimilarity")
-  expect_equal(as.matrix(loaded), mat)
+  loaded_mat <- cache_load(cache_dir, "test_mat.rds")
+  expect_s4_class(loaded_mat, "TriSimilarity")
+  expect_equal(as.matrix(loaded_mat), mat)
 })
 
 test_that("cache_load returns NULL for missing file", {
@@ -104,21 +87,19 @@ test_that("cache_load returns NULL for missing file", {
   expect_null(cache_load(cache_dir, "nonexistent.rds"))
 })
 
-test_that("cache_load warns and returns NULL for corrupt file", {
+test_that("cache_load warns and returns NULL for invalid files", {
   cache_dir <- withr::local_tempdir()
-  writeLines("not an rds file", file.path(cache_dir, "corrupt.rds"))
 
+  # Corrupt file
+  writeLines("not an rds file", file.path(cache_dir, "corrupt.rds"))
   expect_warning(
     result <- cache_load(cache_dir, "corrupt.rds"),
     "Corrupt cache file"
   )
   expect_null(result)
-})
 
-test_that("cache_load warns and returns NULL for wrong object type", {
-  cache_dir <- withr::local_tempdir()
+  # Wrong object type
   saveRDS(list(a = 1), file.path(cache_dir, "wrong_type.rds"))
-
   expect_warning(
     result <- cache_load(cache_dir, "wrong_type.rds"),
     "does not contain a TriSimilarity"
@@ -141,14 +122,14 @@ test_that("cache_save creates directory if it doesn't exist", {
 
 # ---- cache_list ----
 
-test_that("cache_list returns empty data frame for non-existent dir", {
+test_that("cache_list handles non-existent and empty directories", {
+  # Non-existent directory
   result <- cache_list(file.path(tempdir(), "nonexistent_dir_12345"))
   expect_s3_class(result, "data.frame")
   expect_equal(nrow(result), 0)
   expect_true(all(c("file", "size_mb", "modified", "method") %in% names(result)))
-})
 
-test_that("cache_list returns empty data frame for empty dir", {
+  # Empty directory
   cache_dir <- withr::local_tempdir()
   result <- cache_list(cache_dir)
   expect_equal(nrow(result), 0)
@@ -215,7 +196,7 @@ test_that("cache_clear returns 0 for non-existent dir", {
 
 # ---- Integration with similarity functions ----
 
-test_that("calculate_pcc_mr caches and reloads (PCC only)", {
+test_that("calculate_pcc_mr caches and reloads correctly", {
   cache_dir <- withr::local_tempdir()
 
   set.seed(42)
@@ -224,8 +205,6 @@ test_that("calculate_pcc_mr caches and reloads (PCC only)", {
 
   # First call: compute and cache
   sim1 <- calculate_pcc_mr(expr, method = "pcc", cache_dir = cache_dir)
-
-  # Verify file was created
   files <- list.files(cache_dir, pattern = "\\.rds$")
   expect_equal(length(files), 1)
 
@@ -234,31 +213,18 @@ test_that("calculate_pcc_mr caches and reloads (PCC only)", {
     sim2 <- calculate_pcc_mr(expr, method = "pcc", cache_dir = cache_dir),
     "Loading cached"
   )
-
   expect_s4_class(sim2, "TriSimilarity")
   expect_equal(sim1@data, sim2@data)
   expect_equal(sim1@genes, sim2@genes)
-})
 
-test_that("calculate_pcc_mr cache returns full matrix when return_tri = FALSE", {
-  cache_dir <- withr::local_tempdir()
-
-  set.seed(42)
-  expr <- matrix(rnorm(30 * 10), nrow = 30, ncol = 10)
-  rownames(expr) <- paste0("Gene", 1:30)
-
-  # Cache with return_tri = TRUE (default)
-  sim_tri <- calculate_pcc_mr(expr, method = "pcc", cache_dir = cache_dir)
-
-  # Reload with return_tri = FALSE
+  # Reload as full matrix
   expect_message(
     sim_mat <- calculate_pcc_mr(expr, method = "pcc", cache_dir = cache_dir,
                                 return_tri = FALSE),
     "Loading cached"
   )
-
   expect_true(is.matrix(sim_mat))
-  expect_equal(sim_mat, as.matrix(sim_tri))
+  expect_equal(sim_mat, as.matrix(sim1))
 })
 
 test_that("calculate_mi_clr caches and reloads", {
@@ -269,18 +235,14 @@ test_that("calculate_mi_clr caches and reloads", {
   expr <- matrix(rnorm(20 * 40), nrow = 20, ncol = 40)
   rownames(expr) <- paste0("Gene", 1:20)
 
-  # First call: compute and cache
   sim1 <- calculate_mi_clr(expr, n_bins = 5, cache_dir = cache_dir)
-
   files <- list.files(cache_dir, pattern = "\\.rds$")
   expect_equal(length(files), 1)
 
-  # Second call: should hit cache
   expect_message(
     sim2 <- calculate_mi_clr(expr, n_bins = 5, cache_dir = cache_dir),
     "Loading cached"
   )
-
   expect_s4_class(sim2, "TriSimilarity")
   expect_equal(sim1@data, sim2@data)
 })
@@ -309,16 +271,4 @@ test_that("cache_dir = NULL does not cache (default behavior)", {
   # No message about loading/caching
   sim <- calculate_pcc_mr(expr, method = "pcc", cache_dir = NULL)
   expect_s4_class(sim, "TriSimilarity")
-})
-
-test_that("n_cores does not affect cache key", {
-  set.seed(42)
-  expr <- matrix(rnorm(30 * 10), nrow = 30, ncol = 10)
-  rownames(expr) <- paste0("Gene", 1:30)
-
-  # Keys should be identical regardless of n_cores
-  key1 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
-  key2 <- compute_cache_key(expr, "pcc_mr", cor_method = "pearson")
-  expect_identical(key1, key2)
-  # n_cores is NOT included in the key, so it can't change the key
 })
