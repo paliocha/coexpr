@@ -272,8 +272,8 @@ The C++ implementation uses OpenMP for parallel computation when available:
 
 ```{r openmp_check}
 # Check if OpenMP is available
-cat("OpenMP available:", has_openmp(), "\n")
-cat("Maximum threads:", get_max_threads(), "\n")
+cat("OpenMP available:", coexpr:::has_openmp(), "\n")
+cat("Maximum threads:", coexpr:::get_max_threads(), "\n")
 ```
 
 ### Alternative: MI+CLR similarity
