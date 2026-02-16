@@ -47,7 +47,7 @@ setValidity("TriSimilarity", function(object) {
   errors <- character()
 
   # Check data length
-  expected_len <- object@n * (object@n - 1L) / 2L
+  expected_len <- as.double(object@n) * (object@n - 1L) / 2L
   if (length(object@data) != expected_len) {
     errors <- c(errors, sprintf(
       "data length (%d) doesn't match expected (%d) for %d genes",
@@ -158,7 +158,7 @@ setMethod("as.matrix", "TriSimilarity", function(x, ...) {
 
   # Fill both triangles via direct indexing (avoids upper.tri/lower.tri allocations)
   for (j in seq.int(2L, n)) {
-    col_start <- (j - 1L) * (j - 2L) / 2L
+    col_start <- as.double(j - 1L) * (j - 2L) / 2L
     rows <- seq_len(j - 1L)
     vals <- x@data[col_start + rows]
     mat[rows, j] <- vals
@@ -188,7 +188,7 @@ setMethod("dimnames", "TriSimilarity", function(x) {
 #' @export
 setMethod("show", "TriSimilarity", function(object) {
   mem_used <- object.size(object@data)
-  mem_full <- 8 * object@n * object@n
+  mem_full <- 8 * as.double(object@n) * object@n
 
   cat("TriSimilarity: ", object@n, " x ", object@n, " genes\n", sep = "")
   cat(sprintf("Storage: %.2f MB (%.1f%% of full matrix)\n",
@@ -249,7 +249,7 @@ setMethod("[", c("TriSimilarity", "ANY", "ANY"),
       jj <- max(i, j)
 
       # Index in upper triangle vector (column-major)
-      idx <- (jj - 1) * (jj - 2) / 2 + ii
+      idx <- as.double(jj - 1) * (jj - 2) / 2 + ii
       return(x@data[idx])
     }
 
@@ -261,7 +261,7 @@ setMethod("[", c("TriSimilarity", "ANY", "ANY"),
     ii <- pmin(rows_exp, cols_exp)
     jj <- pmax(rows_exp, cols_exp)
 
-    idx <- (jj - 1L) * (jj - 2L) / 2L + ii
+    idx <- as.double(jj - 1L) * (jj - 2L) / 2L + ii
     values <- x@data[idx]
     values[is_diag] <- x@diag_value
 
@@ -328,13 +328,13 @@ setMethod("extractColumn", "TriSimilarity", function(x, gene) {
   # Values where row < j (in upper triangle): index = (j-1)*(j-2)/2 + row
   if (j > 1L) {
     rows_above <- seq_len(j - 1L)
-    col[rows_above] <- x@data[(j - 1L) * (j - 2L) / 2L + rows_above]
+    col[rows_above] <- x@data[as.double(j - 1L) * (j - 2L) / 2L + rows_above]
   }
 
   # Values where row > j (mirror from upper triangle): index = (row-1)*(row-2)/2 + j
   if (j < n) {
     rows_below <- seq.int(j + 1L, n)
-    col[rows_below] <- x@data[(rows_below - 1L) * (rows_below - 2L) / 2L + j]
+    col[rows_below] <- x@data[as.double(rows_below - 1L) * (rows_below - 2L) / 2L + j]
   }
 
   names(col) <- x@genes
@@ -365,12 +365,7 @@ setMethod("extractColumns", "TriSimilarity", function(x, genes) {
     indices <- genes
   }
 
-  result <- matrix(NA_real_, nrow = x@n, ncol = length(indices))
-
-  for (ci in seq_along(indices)) {
-    result[, ci] <- extractColumn(x, indices[ci])
-  }
-
+  result <- vapply(indices, \(ci) extractColumn(x, ci), numeric(x@n))
   rownames(result) <- x@genes
   colnames(result) <- x@genes[indices]
   result

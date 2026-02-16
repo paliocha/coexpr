@@ -316,17 +316,36 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
       mat_sp2 <- sim_sp2[ref_genes_sp2, orthologs_filt$gene_sp2, drop = FALSE]
     }
 
-    # Apply self-diagonal handling per pair
+    # Apply self-diagonal handling — vectorized across all pairs
     if (handle_self_diagonal != "none") {
-      for (i in seq_len(n_pairs)) {
-        mat_sp1[, i] <- handle_diagonal(mat_sp1[, i],
-                                         orthologs_filt$gene_sp1[i],
-                                         ref_genes_sp1,
-                                         handle_self_diagonal)
-        mat_sp2[, i] <- handle_diagonal(mat_sp2[, i],
-                                         orthologs_filt$gene_sp2[i],
-                                         ref_genes_sp2,
-                                         handle_self_diagonal)
+      # For each pair, find if the gene is in the reference set
+      self_idx_sp1 <- match(orthologs_filt$gene_sp1, ref_genes_sp1)
+      self_idx_sp2 <- match(orthologs_filt$gene_sp2, ref_genes_sp2)
+
+      # Process sp1 pairs where gene is in reference
+      has_self_sp1 <- which(!is.na(self_idx_sp1))
+      if (length(has_self_sp1) > 0) {
+        for (i in has_self_sp1) {
+          si <- self_idx_sp1[i]
+          if (handle_self_diagonal == "mean") {
+            mat_sp1[si, i] <- mean(mat_sp1[-si, i], na.rm = TRUE)
+          } else {
+            mat_sp1[si, i] <- NA
+          }
+        }
+      }
+
+      # Process sp2 pairs where gene is in reference
+      has_self_sp2 <- which(!is.na(self_idx_sp2))
+      if (length(has_self_sp2) > 0) {
+        for (i in has_self_sp2) {
+          si <- self_idx_sp2[i]
+          if (handle_self_diagonal == "mean") {
+            mat_sp2[si, i] <- mean(mat_sp2[-si, i], na.rm = TRUE)
+          } else {
+            mat_sp2[si, i] <- NA
+          }
+        }
       }
     }
 

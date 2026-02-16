@@ -303,9 +303,7 @@ resolve_nm_optimal <- function(pairs, score_col = "score") {
     rownames(score_mat) <- sp1_genes
     colnames(score_mat) <- sp2_genes
 
-    for (i in seq_len(nrow(pairs))) {
-      score_mat[pairs$gene_sp1[i], pairs$gene_sp2[i]] <- pairs[[score_col]][i]
-    }
+    score_mat[cbind(pairs$gene_sp1, pairs$gene_sp2)] <- pairs[[score_col]]
 
     # solve_LSAP minimizes cost with non-negative entries, so transform:
     # cost = max_score - score (large cost for low scores, zero for best)
@@ -333,19 +331,14 @@ resolve_nm_optimal <- function(pairs, score_col = "score") {
     }
 
     # Extract valid assignments (within original dimensions and with real scores)
+    valid_i <- seq_len(min(nr, length(assignment)))
+    valid_j <- assignment[valid_i]
+    keep <- valid_j <= nc & score_mat[cbind(valid_i, valid_j)] > -Inf
     selected <- data.frame(
-      gene_sp1 = character(0), gene_sp2 = character(0),
+      gene_sp1 = sp1_genes[valid_i[keep]],
+      gene_sp2 = sp2_genes[valid_j[keep]],
       stringsAsFactors = FALSE
     )
-    for (i in seq_len(min(nr, length(assignment)))) {
-      j <- assignment[i]
-      if (j <= nc && score_mat[i, j] > -Inf) {
-        selected <- rbind(selected, data.frame(
-          gene_sp1 = sp1_genes[i], gene_sp2 = sp2_genes[j],
-          stringsAsFactors = FALSE
-        ))
-      }
-    }
 
     # Rejoin with original pairs to preserve all columns
     result <- dplyr::semi_join(pairs, selected, by = c("gene_sp1", "gene_sp2"))
@@ -856,12 +849,10 @@ collapse_orthologs <- function(orthologs,
       # Build reference submatrices for this group: n_ref x n_candidates
       # Each column = candidate's co-expression vector against references
       n_cand <- nrow(cands)
-      mat_sp1 <- matrix(NA_real_, length(ref_genes_sp1), n_cand)
-      mat_sp2 <- matrix(NA_real_, length(ref_genes_sp2), n_cand)
-      for (j in seq_len(n_cand)) {
-        mat_sp1[, j] <- get_col(similarity_sp1, cands$gene_sp1[j])[ref_genes_sp1]
-        mat_sp2[, j] <- get_col(similarity_sp2, cands$gene_sp2[j])[ref_genes_sp2]
-      }
+      mat_sp1 <- vapply(cands$gene_sp1, \(g) get_col(similarity_sp1, g)[ref_genes_sp1],
+                         numeric(length(ref_genes_sp1)))
+      mat_sp2 <- vapply(cands$gene_sp2, \(g) get_col(similarity_sp2, g)[ref_genes_sp2],
+                         numeric(length(ref_genes_sp2)))
 
       selected_idx <- which(cands[[cand_col]] == selected_cand) - 1L  # 0-based
 
@@ -1037,16 +1028,15 @@ expand_reference_iteratively <- function(orthologs,
     return(result)
   }
 
-  # Compute n_candidates per group
+  # Compute n_candidates per group (vectorized via dplyr)
   # N:1 groups: count per gene_sp1; 1:N groups: count per gene_sp2
-  candidates$n_cand <- vapply(seq_len(nrow(candidates)), function(i) {
-    tt <- candidates$type[i]
-    if (tt == "N:1") {
-      sum(candidates$gene_sp1 == candidates$gene_sp1[i] & candidates$type == tt)
-    } else {
-      sum(candidates$gene_sp2 == candidates$gene_sp2[i] & candidates$type == tt)
-    }
-  }, integer(1))
+  n1_counts <- candidates |>
+    dplyr::filter(.data$type == "N:1") |>
+    dplyr::add_count(.data$gene_sp1, name = "n_cand")
+  on_counts <- candidates |>
+    dplyr::filter(.data$type != "N:1") |>
+    dplyr::add_count(.data$gene_sp2, name = "n_cand")
+  candidates <- dplyr::bind_rows(n1_counts, on_counts)
 
   # Track which groups have been assigned
   assigned_groups <- character(0)
@@ -1499,8 +1489,8 @@ diagnose_reference <- function(orthologs, similarity_sp1, similarity_sp2,
                     ccs_stats$median, ccs_stats$mean, ccs_stats$sd,
                     ccs_stats$skewness))
   }
-  for (w in warnings) {
-    message(sprintf("  * %s", w))
+  if (length(warnings) > 0) {
+    message(paste(sprintf("  * %s", warnings), collapse = "\n"))
   }
 
   list(
