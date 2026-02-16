@@ -11,6 +11,21 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// bootstrap_group_scores_cpp
+List bootstrap_group_scores_cpp(const arma::mat& ref_sp1, const arma::mat& ref_sp2, int selected_idx, int n_bootstrap, unsigned int seed);
+RcppExport SEXP _coexpr_bootstrap_group_scores_cpp(SEXP ref_sp1SEXP, SEXP ref_sp2SEXP, SEXP selected_idxSEXP, SEXP n_bootstrapSEXP, SEXP seedSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type ref_sp1(ref_sp1SEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type ref_sp2(ref_sp2SEXP);
+    Rcpp::traits::input_parameter< int >::type selected_idx(selected_idxSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bootstrap(n_bootstrapSEXP);
+    Rcpp::traits::input_parameter< unsigned int >::type seed(seedSEXP);
+    rcpp_result_gen = Rcpp::wrap(bootstrap_group_scores_cpp(ref_sp1, ref_sp2, selected_idx, n_bootstrap, seed));
+    return rcpp_result_gen;
+END_RCPP
+}
 // discretize_equalfreq_cpp
 arma::ivec discretize_equalfreq_cpp(const arma::vec& x, int n_bins);
 RcppExport SEXP _coexpr_discretize_equalfreq_cpp(SEXP xSEXP, SEXP n_binsSEXP) {
@@ -167,6 +182,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_coexpr_bootstrap_group_scores_cpp", (DL_FUNC) &_coexpr_bootstrap_group_scores_cpp, 5},
     {"_coexpr_discretize_equalfreq_cpp", (DL_FUNC) &_coexpr_discretize_equalfreq_cpp, 2},
     {"_coexpr_discretize_matrix_cpp", (DL_FUNC) &_coexpr_discretize_matrix_cpp, 3},
     {"_coexpr_compute_mi_matrix_cpp", (DL_FUNC) &_coexpr_compute_mi_matrix_cpp, 3},
