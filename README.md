@@ -48,20 +48,20 @@ Expression matrices (per species)
         │
         ▼
    ┌─────────────┐
-   │  Similarity  │  S_ij = f(E_i, E_j)
-   │   matrices   │  within-species co-expression
+   │  Similarity │  S_ij = f(E_i, E_j)
+   │   matrices  │  within-species co-expression
    └──────┬──────┘
           │
           ▼
    ┌─────────────┐
-   │     CCS      │  CCS_ij = cor(S^sp1_r,i, S^sp2_r,j)
-   │              │  cross-species co-expression correlation
+   │     CCS     │  CCS_ij = cor(S^sp1_r,i, S^sp2_r,j)
+   │             │  cross-species co-expression correlation
    └──────┬──────┘
           │
           ▼
    ┌─────────────┐
-   │     ORS      │  ORS_ij = rank(CCS_ij) / n
-   │              │  statistical ranking of conservation
+   │     ORS     │  ORS_ij = rank(CCS_ij) / n
+   │             │  statistical ranking of conservation
    └──────┬──────┘
           │
           ▼
