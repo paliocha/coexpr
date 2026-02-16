@@ -16,9 +16,6 @@ NULL
 compute_cache_key <- function(expr_matrix, method_label, ...) {
   params <- list(...)
 
-
-  # Hash matrix directly — serialization captures data, dims, and names
-  # without the extra as.vector() copy (saves ~16 MB for 10k x 200 matrices)
   key_content <- list(
     expr_matrix = expr_matrix,
     method_label = method_label,
@@ -26,9 +23,6 @@ compute_cache_key <- function(expr_matrix, method_label, ...) {
   )
 
   hash <- digest::digest(key_content, algo = "xxhash64")
-
-
-  # Build human-readable prefix from params
 
   param_str <- paste(vapply(params, as.character, character(1)), collapse = "_")
   if (nzchar(param_str)) {
@@ -65,7 +59,7 @@ cache_load <- function(cache_dir, cache_key) {
 
   if (is.null(obj)) return(NULL)
 
-  if (!methods::is(obj, "TriSimilarity")) {
+  if (!is(obj, "TriSimilarity")) {
     warning(sprintf("Cache file '%s' does not contain a TriSimilarity object, will recompute",
                     cache_key), call. = FALSE)
     return(NULL)
@@ -129,8 +123,7 @@ cache_list <- function(cache_dir) {
     file = character(0),
     size_mb = numeric(0),
     modified = as.POSIXct(character(0)),
-    method = character(0),
-    stringsAsFactors = FALSE
+    method = character(0)
   )
 
   if (!dir.exists(cache_dir)) {
@@ -153,7 +146,6 @@ cache_list <- function(cache_dir) {
     size_mb = round(info$size / 1e6, 2),
     modified = info$mtime,
     method = methods,
-    stringsAsFactors = FALSE,
     row.names = NULL
   )
 }

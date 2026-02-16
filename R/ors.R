@@ -109,7 +109,7 @@ calculate_ors <- function(ccs_results, return_log = TRUE, directional = FALSE) {
       )
   }
 
-  return(ors_results)
+  ors_results
 }
 
 
@@ -170,5 +170,5 @@ test_ors_significance <- function(ors_results, alpha = 0.05,
   message(sprintf("%d / %d orthologs are significant (alpha = %.3f, method = %s)",
                   n_sig, nrow(ors_results), alpha, method_label))
 
-  return(ors_results)
+  ors_results
 }

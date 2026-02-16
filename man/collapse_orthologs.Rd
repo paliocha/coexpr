@@ -37,7 +37,7 @@ this many copies (default 2L, matching WGD). Set to NULL to collapse all
 group sizes.}
 
 \item{n_bootstrap}{Integer. Number of bootstrap iterations to assess
-selection confidence. If > 0, subsamples 80\% of the reference set
+selection confidence. If > 0, subsamples 80\\% of the reference set
 \code{n_bootstrap} times and re-scores candidates. Adds a
 \code{selection_confidence} column (proportion of bootstraps that select the
 same candidate) and \code{score_ci_low}/\code{score_ci_high} (2.5th/97.5th

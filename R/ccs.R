@@ -96,32 +96,14 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
 
   handle_self_diagonal <- match.arg(handle_self_diagonal)
 
-  # Validate inputs - accept matrices or TriSimilarity objects
-  is_valid_sim <- function(x) {
-    is.matrix(x) || is(x, "TriSimilarity")
-  }
-
   if (!is_valid_sim(sim_sp1) || !is_valid_sim(sim_sp2)) {
     stop("Similarity matrices must be matrices or TriSimilarity objects")
   }
 
-  # Get gene names from similarity matrices
-  get_genes <- function(sim) {
-    if (is(sim, "TriSimilarity")) {
-      sim@genes
-    } else {
-      rownames(sim)
-    }
-  }
+  genes_sp1 <- sim_genes(sim_sp1)
+  genes_sp2 <- sim_genes(sim_sp2)
 
-  genes_sp1 <- get_genes(sim_sp1)
-  genes_sp2 <- get_genes(sim_sp2)
-
-  required_cols <- c("gene_sp1", "gene_sp2")
-  if (!all(required_cols %in% colnames(orthologs))) {
-    stop(sprintf("orthologs must have columns: %s",
-                 paste(required_cols, collapse = ", ")))
-  }
+  check_ortholog_cols(orthologs)
 
   # Define reference orthologs (1:1 only)
   if (use_only_1to1) {
@@ -179,16 +161,7 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
   ref_genes_sp1 <- ref_orthologs_filt$gene_sp1
   ref_genes_sp2 <- ref_orthologs_filt$gene_sp2
 
-  # Helper function to extract column from similarity matrix
-  extract_sim_column <- function(sim, gene) {
-    if (is(sim, "TriSimilarity")) {
-      extractColumn(sim, gene)
-    } else {
-      sim[, gene]
-    }
-  }
-
-  # Helper function to handle self-diagonal
+  # Handle self-diagonal: when a gene being evaluated is also in the reference
   handle_diagonal <- function(coexpr, gene, ref_genes, method) {
     if (method == "none") {
       return(coexpr)
@@ -214,9 +187,6 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
     coexpr
   }
 
-  # Always use pairwise.complete.obs to handle NaN values from zero-variance
-
-  # genes in raw PCC/SCC similarity matrices
   cor_use <- "pairwise.complete.obs"
 
   # Calculate CCS for each ortholog pair
@@ -232,8 +202,8 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
           gene_sp1 <- orthologs_filt$gene_sp1[i]
           gene_sp2 <- orthologs_filt$gene_sp2[i]
 
-          coexpr_sp1 <- extract_sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
-          coexpr_sp2 <- extract_sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
+          coexpr_sp1 <- sim_column(sim_sp1, gene_sp1)[ref_genes_sp1]
+          coexpr_sp2 <- sim_column(sim_sp2, gene_sp2)[ref_genes_sp2]
 
           # Handle self-diagonal
           coexpr_sp1 <- handle_diagonal(coexpr_sp1, gene_sp1, ref_genes_sp1, handle_self_diagonal)
@@ -367,5 +337,5 @@ calculate_ccs <- function(sim_sp1, sim_sp2, orthologs,
       )
   }
 
-  return(ccs_results)
+  ccs_results
 }

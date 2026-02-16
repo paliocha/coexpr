@@ -71,14 +71,8 @@ handle_multicopy_orthologs <- function(orthologs,
 
   strategy <- match.arg(strategy)
 
-  # Validate input
-  required_cols <- c("gene_sp1", "gene_sp2")
-  if (!all(required_cols %in% colnames(orthologs))) {
-    stop(sprintf("orthologs must have columns: %s",
-                 paste(required_cols, collapse = ", ")))
-  }
+  check_ortholog_cols(orthologs)
 
-  # Detect ortholog types if not provided
   if (!"type" %in% colnames(orthologs)) {
     orthologs <- detect_ortholog_types(orthologs)
   }
@@ -100,7 +94,7 @@ handle_multicopy_orthologs <- function(orthologs,
   message(sprintf("Strategy '%s': Retained %d / %d ortholog pairs",
                   strategy, nrow(result), nrow(orthologs)))
 
-  return(result)
+  result
 }
 
 
@@ -134,7 +128,7 @@ detect_ortholog_types <- function(orthologs) {
     ) |>
     dplyr::select(-"n_sp1", -"n_sp2")
 
-  return(orthologs_typed)
+  orthologs_typed
 }
 
 
@@ -162,15 +156,11 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
     stop("Strategy 'best_hit' requires similarity_sp1 and similarity_sp2")
   }
 
-  # Build 1:1 reference set for CCS-based scoring
   ref_pairs <- orthologs |>
     dplyr::filter(.data$type == "1:1")
 
-  get_sim_genes <- function(sim) {
-    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
-  }
-  genes_sp1 <- get_sim_genes(similarity_sp1)
-  genes_sp2 <- get_sim_genes(similarity_sp2)
+  genes_sp1 <- sim_genes(similarity_sp1)
+  genes_sp2 <- sim_genes(similarity_sp2)
 
   ref_pairs <- ref_pairs |>
     dplyr::filter(.data$gene_sp1 %in% genes_sp1,
@@ -241,22 +231,15 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
 make_pair_scorer <- function(similarity_sp1, similarity_sp2,
                              ref_genes_sp1, ref_genes_sp2) {
 
-  get_sim_genes <- function(sim) {
-    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
-  }
-  genes_sp1 <- get_sim_genes(similarity_sp1)
-  genes_sp2 <- get_sim_genes(similarity_sp2)
-
-  get_col <- function(sim, gene) {
-    if (is(sim, "TriSimilarity")) extractColumn(sim, gene) else sim[, gene]
-  }
+  genes_sp1 <- sim_genes(similarity_sp1)
+  genes_sp2 <- sim_genes(similarity_sp2)
 
   function(gene_sp1, gene_sp2) {
     if (!(gene_sp1 %in% genes_sp1) || !(gene_sp2 %in% genes_sp2)) {
       return(NA_real_)
     }
-    vec1 <- get_col(similarity_sp1, gene_sp1)[ref_genes_sp1]
-    vec2 <- get_col(similarity_sp2, gene_sp2)[ref_genes_sp2]
+    vec1 <- sim_column(similarity_sp1, gene_sp1)[ref_genes_sp1]
+    vec2 <- sim_column(similarity_sp2, gene_sp2)[ref_genes_sp2]
     stats::cor(vec1, vec2, use = "pairwise.complete.obs")
   }
 }
@@ -285,15 +268,8 @@ resolve_nm_optimal <- function(pairs, score_col = "score") {
   sp1_genes <- unique(pairs$gene_sp1)
   sp2_genes <- unique(pairs$gene_sp2)
 
-  # Trivial cases: 1 gene on either side
-
   if (length(sp1_genes) == 1 || length(sp2_genes) == 1) {
-    # Just pick best per group
-    if (length(sp1_genes) == 1) {
-      return(pairs[which.max(pairs[[score_col]]), , drop = FALSE])
-    } else {
-      return(pairs[which.max(pairs[[score_col]]), , drop = FALSE])
-    }
+    return(pairs[which.max(pairs[[score_col]]), , drop = FALSE])
   }
 
   # Try Hungarian algorithm
@@ -336,8 +312,7 @@ resolve_nm_optimal <- function(pairs, score_col = "score") {
     keep <- valid_j <= nc & score_mat[cbind(valid_i, valid_j)] > -Inf
     selected <- data.frame(
       gene_sp1 = sp1_genes[valid_i[keep]],
-      gene_sp2 = sp2_genes[valid_j[keep]],
-      stringsAsFactors = FALSE
+      gene_sp2 = sp2_genes[valid_j[keep]]
     )
 
     # Rejoin with original pairs to preserve all columns
@@ -552,12 +527,11 @@ aggregate_by_max <- function(orthologs, ccs_values) {
 #' }
 #'
 #' @param n_bootstrap Integer. Number of bootstrap iterations to assess
-#'   selection confidence. If > 0, subsamples 80% of the reference set
+#'   selection confidence. If > 0, subsamples 80\% of the reference set
 #'   `n_bootstrap` times and re-scores candidates. Adds a
 #'   `selection_confidence` column (proportion of bootstraps that select the
 #'   same candidate) and `score_ci_low`/`score_ci_high` (2.5th/97.5th
 #'   percentile of homeolog scores). Default 0 (no bootstrap).
-#'
 #' @export
 collapse_orthologs <- function(orthologs,
                                similarity_sp1,
@@ -568,24 +542,15 @@ collapse_orthologs <- function(orthologs,
 
   multicopy_sp <- match.arg(multicopy_sp)
 
-  # Validate inputs
-  required_cols <- c("gene_sp1", "gene_sp2")
-  if (!all(required_cols %in% colnames(orthologs))) {
-    stop(sprintf("orthologs must have columns: %s",
-                 paste(required_cols, collapse = ", ")))
-  }
-
-  is_valid_sim <- function(x) is.matrix(x) || is(x, "TriSimilarity")
+  check_ortholog_cols(orthologs)
   if (!is_valid_sim(similarity_sp1) || !is_valid_sim(similarity_sp2)) {
     stop("similarity_sp1 and similarity_sp2 must be matrices or TriSimilarity objects")
   }
 
-  # Detect ortholog types if not provided
   if (!"type" %in% colnames(orthologs)) {
     orthologs <- detect_ortholog_types(orthologs)
   }
 
-  # Extract 1:1 orthologs as initial reference set
   ref_pairs <- orthologs |>
     dplyr::filter(.data$type == "1:1")
 
@@ -593,13 +558,8 @@ collapse_orthologs <- function(orthologs,
     stop("No 1:1 orthologs found. Cannot build reference set for scoring.")
   }
 
-  # Get gene names from similarity matrices
-  get_sim_genes <- function(sim) {
-    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
-  }
-
-  genes_sp1 <- get_sim_genes(similarity_sp1)
-  genes_sp2 <- get_sim_genes(similarity_sp2)
+  genes_sp1 <- sim_genes(similarity_sp1)
+  genes_sp2 <- sim_genes(similarity_sp2)
 
   # Filter reference pairs to those present in both similarity matrices
   ref_pairs <- ref_pairs |>
@@ -639,8 +599,7 @@ collapse_orthologs <- function(orthologs,
       return(data.frame(
         gene_sp1 = character(0), gene_sp2 = character(0),
         type = character(0), original_type = character(0),
-        homeolog_score = numeric(0), n_candidates = integer(0),
-        stringsAsFactors = FALSE
+        homeolog_score = numeric(0), n_candidates = integer(0)
       ))
     }
 
@@ -670,8 +629,7 @@ collapse_orthologs <- function(orthologs,
       return(data.frame(
         gene_sp1 = character(0), gene_sp2 = character(0),
         type = character(0), original_type = character(0),
-        homeolog_score = numeric(0), n_candidates = integer(0),
-        stringsAsFactors = FALSE
+        homeolog_score = numeric(0), n_candidates = integer(0)
       ))
     }
 
@@ -810,11 +768,6 @@ collapse_orthologs <- function(orthologs,
   if (n_bootstrap > 0 && any(!is.na(result$original_type))) {
     collapsed_idx <- which(!is.na(result$original_type))
 
-    # Pre-extract full reference submatrices once (n_ref x n_genes)
-    get_col <- function(sim, gene) {
-      if (is(sim, "TriSimilarity")) extractColumn(sim, gene) else sim[, gene]
-    }
-
     boot_confidence <- rep(NA_real_, nrow(result))
     boot_score_low <- rep(NA_real_, nrow(result))
     boot_score_high <- rep(NA_real_, nrow(result))
@@ -849,9 +802,9 @@ collapse_orthologs <- function(orthologs,
       # Build reference submatrices for this group: n_ref x n_candidates
       # Each column = candidate's co-expression vector against references
       n_cand <- nrow(cands)
-      mat_sp1 <- vapply(cands$gene_sp1, \(g) get_col(similarity_sp1, g)[ref_genes_sp1],
+      mat_sp1 <- vapply(cands$gene_sp1, \(g) sim_column(similarity_sp1, g)[ref_genes_sp1],
                          numeric(length(ref_genes_sp1)))
-      mat_sp2 <- vapply(cands$gene_sp2, \(g) get_col(similarity_sp2, g)[ref_genes_sp2],
+      mat_sp2 <- vapply(cands$gene_sp2, \(g) sim_column(similarity_sp2, g)[ref_genes_sp2],
                          numeric(length(ref_genes_sp2)))
 
       selected_idx <- which(cands[[cand_col]] == selected_cand) - 1L  # 0-based
@@ -948,14 +901,7 @@ expand_reference_iteratively <- function(orthologs,
 
   multicopy_sp <- match.arg(multicopy_sp)
 
-  # Validate inputs
-  required_cols <- c("gene_sp1", "gene_sp2")
-  if (!all(required_cols %in% colnames(orthologs))) {
-    stop(sprintf("orthologs must have columns: %s",
-                 paste(required_cols, collapse = ", ")))
-  }
-
-  is_valid_sim <- function(x) is.matrix(x) || is(x, "TriSimilarity")
+  check_ortholog_cols(orthologs)
   if (!is_valid_sim(similarity_sp1) || !is_valid_sim(similarity_sp2)) {
     stop("similarity_sp1 and similarity_sp2 must be matrices or TriSimilarity objects")
   }
@@ -964,11 +910,8 @@ expand_reference_iteratively <- function(orthologs,
     orthologs <- detect_ortholog_types(orthologs)
   }
 
-  get_sim_genes <- function(sim) {
-    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
-  }
-  genes_sp1 <- get_sim_genes(similarity_sp1)
-  genes_sp2 <- get_sim_genes(similarity_sp2)
+  genes_sp1 <- sim_genes(similarity_sp1)
+  genes_sp2 <- sim_genes(similarity_sp2)
 
   # Initialize reference with 1:1 orthologs
   ref_pairs <- orthologs |>
@@ -1247,8 +1190,7 @@ analyze_paralog_divergence <- function(ors_results,
         primary_logORS = g$logORS[best_idx],
         secondary_ccs = if (nrow(g) > 1) sorted_ccs[2] else NA_real_,
         mean_ccs = mean(g$CCS, na.rm = TRUE),
-        min_ccs = min(g$CCS, na.rm = TRUE),
-        stringsAsFactors = FALSE
+        min_ccs = min(g$CCS, na.rm = TRUE)
       )
     })
     result_df <- do.call(rbind, rows)
@@ -1390,12 +1332,8 @@ diagnose_reference <- function(orthologs, similarity_sp1, similarity_sp2,
   ref <- orthologs[orthologs$type == "1:1", ]
   n_1to1 <- nrow(ref)
 
-  # Get gene names from similarity matrices
-  get_sim_genes <- function(sim) {
-    if (methods::is(sim, "TriSimilarity")) sim@genes else rownames(sim)
-  }
-  genes_sp1 <- get_sim_genes(similarity_sp1)
-  genes_sp2 <- get_sim_genes(similarity_sp2)
+  genes_sp1 <- sim_genes(similarity_sp1)
+  genes_sp2 <- sim_genes(similarity_sp2)
 
   # Check which reference genes are present
   in_sp1 <- ref$gene_sp1 %in% genes_sp1
