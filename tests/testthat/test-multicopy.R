@@ -1153,6 +1153,160 @@ test_that("analyze_paralog_divergence errors when no multi-copy", {
 })
 
 
+# --- Tests for diagnose_reference ---
+
+test_that("diagnose_reference basic output structure", {
+  sim_sp1 <- matrix(0.5, 5, 5)
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", 1:5)
+
+  sim_sp2 <- matrix(0.5, 5, 5)
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", 1:5)
+
+  orthologs <- data.frame(
+    gene_sp1 = paste0("A", 1:5),
+    gene_sp2 = paste0("B", 1:5)
+  )
+
+  result <- diagnose_reference(orthologs, sim_sp1, sim_sp2)
+
+  expect_type(result, "list")
+  expect_equal(result$n_total, 5)
+  expect_equal(result$n_1to1, 5)
+  expect_equal(result$pct_1to1, 100)
+  expect_equal(result$n_effective, 5)
+  expect_equal(result$pct_effective, 100)
+  expect_length(result$missing_sp1, 0)
+  expect_length(result$missing_sp2, 0)
+  expect_null(result$ccs_stats)
+})
+
+test_that("diagnose_reference detects missing genes", {
+  sim_sp1 <- matrix(0.5, 3, 3)
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- c("A1", "A2", "A3")
+
+  sim_sp2 <- matrix(0.5, 3, 3)
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- c("B1", "B2", "B3")
+
+  # Orthologs include genes not in matrices
+  orthologs <- data.frame(
+    gene_sp1 = c("A1", "A2", "A3", "A4", "A5"),
+    gene_sp2 = c("B1", "B2", "B3", "B4", "B5")
+  )
+
+  result <- diagnose_reference(orthologs, sim_sp1, sim_sp2)
+
+  expect_equal(result$n_1to1, 5)
+  expect_equal(result$n_effective, 3)
+  expect_equal(result$missing_sp1, c("A4", "A5"))
+  expect_equal(result$missing_sp2, c("B4", "B5"))
+  # 40% missing => should warn
+  expect_true(any(grepl("missing from similarity matrices", result$warnings)))
+})
+
+test_that("diagnose_reference warns on small reference", {
+  sim_sp1 <- matrix(0.5, 5, 5)
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", 1:5)
+
+  sim_sp2 <- matrix(0.5, 5, 5)
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", 1:5)
+
+  orthologs <- data.frame(
+    gene_sp1 = paste0("A", 1:5),
+    gene_sp2 = paste0("B", 1:5)
+  )
+
+  result <- diagnose_reference(orthologs, sim_sp1, sim_sp2)
+  # 5 effective references < 10 -> CRITICAL warning
+  expect_true(any(grepl("CRITICAL", result$warnings)))
+})
+
+test_that("diagnose_reference with CCS results", {
+  sim_sp1 <- matrix(0.5, 10, 10)
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", 1:10)
+
+  sim_sp2 <- matrix(0.5, 10, 10)
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", 1:10)
+
+  orthologs <- data.frame(
+    gene_sp1 = paste0("A", 1:10),
+    gene_sp2 = paste0("B", 1:10)
+  )
+
+  ccs_results <- data.frame(
+    gene_sp1 = paste0("A", 1:10),
+    gene_sp2 = paste0("B", 1:10),
+    CCS = c(0.1, 0.2, 0.3, 0.4, 0.5, 0.5, 0.6, 0.7, 0.8, 0.9),
+    type = rep("1:1", 10)
+  )
+
+  result <- diagnose_reference(orthologs, sim_sp1, sim_sp2,
+                               ccs_results = ccs_results)
+
+  expect_false(is.null(result$ccs_stats))
+  expect_equal(result$ccs_stats$n, 10)
+  expect_true(is.numeric(result$ccs_stats$median))
+  expect_true(is.numeric(result$ccs_stats$skewness))
+  expect_true(is.numeric(result$ccs_stats$iqr))
+})
+
+test_that("diagnose_reference handles mixed ortholog types", {
+  sim_sp1 <- matrix(0.5, 6, 6)
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", 1:6)
+
+  sim_sp2 <- matrix(0.5, 8, 8)
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", 1:8)
+
+  orthologs <- data.frame(
+    gene_sp1 = c("A1", "A2", "A3", "A3", "A4", "A5", "A5", "A6"),
+    gene_sp2 = c("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8")
+  )
+
+  result <- diagnose_reference(orthologs, sim_sp1, sim_sp2)
+
+  # 1:1 orthologs: A1-B1, A2-B2, A4-B5, A6-B8 = 4
+  expect_equal(result$n_total, 8)
+  expect_equal(result$n_1to1, 4)
+  expect_equal(result$pct_1to1, 50)
+})
+
+test_that("diagnose_reference works with TriSimilarity", {
+  # Create a TriSimilarity object
+  mat <- matrix(0.5, 5, 5)
+  diag(mat) <- 1
+  rownames(mat) <- colnames(mat) <- paste0("A", 1:5)
+  tri <- as.TriSimilarity(mat)
+
+  sim_sp2 <- matrix(0.5, 5, 5)
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", 1:5)
+
+  orthologs <- data.frame(
+    gene_sp1 = paste0("A", 1:5),
+    gene_sp2 = paste0("B", 1:5)
+  )
+
+  result <- diagnose_reference(orthologs, tri, sim_sp2)
+  expect_equal(result$n_effective, 5)
+})
+
+test_that("diagnose_reference errors on bad input", {
+  expect_error(
+    diagnose_reference(data.frame(x = 1), matrix(1), matrix(1)),
+    "must be a data frame with columns"
+  )
+})
+
+
 test_that("type column is auto-detected when missing", {
   orthologs <- data.frame(
     gene_sp1 = c("A1", "A2", "A2"),

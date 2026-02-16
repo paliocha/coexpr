@@ -395,7 +395,7 @@ aggregate_by_mean <- function(orthologs, ccs_values) {
   n_to_one <- orthologs_with_ccs |>
     dplyr::filter(.data$type == "N:1") |>
     dplyr::group_by(.data$gene_sp1) |>
-    dplyr::summarize(
+    dplyr::summarise(
       gene_sp2 = paste(.data$gene_sp2, collapse = ";"),
       CCS = mean(.data$CCS, na.rm = TRUE),
       type = "aggregated_N:1",
@@ -406,7 +406,7 @@ aggregate_by_mean <- function(orthologs, ccs_values) {
   one_to_n <- orthologs_with_ccs |>
     dplyr::filter(.data$type == "1:N") |>
     dplyr::group_by(.data$gene_sp2) |>
-    dplyr::summarize(
+    dplyr::summarise(
       gene_sp1 = paste(.data$gene_sp1, collapse = ";"),
       CCS = mean(.data$CCS, na.rm = TRUE),
       type = "aggregated_1:N",
@@ -420,7 +420,7 @@ aggregate_by_mean <- function(orthologs, ccs_values) {
   if (nrow(n_to_m) > 0) {
     n_to_m <- n_to_m |>
       dplyr::group_by(.data$gene_sp1) |>
-      dplyr::summarize(
+      dplyr::summarise(
         gene_sp2 = paste(.data$gene_sp2, collapse = ";"),
         CCS = mean(.data$CCS, na.rm = TRUE),
         type = "aggregated_N:M",
@@ -1211,7 +1211,7 @@ analyze_paralog_divergence <- function(ors_results,
   # Summarize by copy number
   by_copy_number <- per_group |>
     dplyr::group_by(.data$copy_number) |>
-    dplyr::summarize(
+    dplyr::summarise(
       n_groups = dplyr::n(),
       median_primary_ccs = stats::median(.data$primary_ccs, na.rm = TRUE),
       median_delta_ccs = stats::median(.data$delta_ccs, na.rm = TRUE),
@@ -1237,5 +1237,194 @@ analyze_paralog_divergence <- function(ors_results,
   list(
     per_group = per_group,
     by_copy_number = by_copy_number
+  )
+}
+
+
+#' Diagnose reference set quality
+#'
+#' Assesses whether the 1:1 ortholog reference set is adequate for CCS
+#' calculation. Reports size, effective size (genes present in both similarity
+#' matrices), and optionally CCS distribution statistics to detect bias.
+#'
+#' @param orthologs Data frame with columns `gene_sp1` and `gene_sp2`.
+#'   Optionally `type` column.
+#' @param similarity_sp1 Similarity matrix or TriSimilarity for species 1.
+#' @param similarity_sp2 Similarity matrix or TriSimilarity for species 2.
+#' @param ccs_results Optional. Data frame from `calculate_ccs()` to assess
+#'   CCS distribution within the reference set.
+#'
+#' @return A list with:
+#'   \describe{
+#'     \item{n_total}{Total number of ortholog pairs}
+#'     \item{n_1to1}{Number of 1:1 ortholog pairs}
+#'     \item{pct_1to1}{Percent of orthologs that are 1:1}
+#'     \item{n_effective}{Number of 1:1 pairs present in both similarity matrices}
+#'     \item{pct_effective}{Percent of 1:1 pairs that are effective}
+#'     \item{missing_sp1}{Gene IDs in reference but missing from similarity_sp1}
+#'     \item{missing_sp2}{Gene IDs in reference but missing from similarity_sp2}
+#'     \item{ccs_stats}{If `ccs_results` provided: list with median, mean, sd,
+#'       skewness, and IQR of reference CCS values}
+#'     \item{warnings}{Character vector of diagnostic warnings}
+#'   }
+#'
+#' @details
+#' A good reference set should:
+#' \itemize{
+#'   \item Have at least 50 effective 1:1 orthologs (>100 preferred)
+#'   \item Have nearly all 1:1 orthologs present in both similarity matrices
+#'   \item Show a roughly symmetric CCS distribution (not heavily skewed)
+#' }
+#'
+#' Warning thresholds:
+#' \itemize{
+#'   \item `< 10 effective references`: Error-level (CCS unreliable)
+#'   \item `< 20 effective references`: Strong warning
+#'   \item `< 50 effective references`: Warning
+#'   \item `> 20% missing from similarity matrices`: Warning
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' diag <- diagnose_reference(orthologs, sim_sp1, sim_sp2)
+#' diag$warnings  # Check for issues
+#'
+#' # With CCS results for distribution analysis
+#' ccs <- calculate_ccs(sim_sp1, sim_sp2, orthologs)
+#' diag <- diagnose_reference(orthologs, sim_sp1, sim_sp2, ccs_results = ccs)
+#' diag$ccs_stats  # Distribution statistics
+#' }
+#'
+#' @export
+diagnose_reference <- function(orthologs, similarity_sp1, similarity_sp2,
+                               ccs_results = NULL) {
+
+  if (!is.data.frame(orthologs) ||
+      !all(c("gene_sp1", "gene_sp2") %in% colnames(orthologs))) {
+    stop("orthologs must be a data frame with columns gene_sp1 and gene_sp2")
+  }
+
+  # Add types if missing
+  if (!"type" %in% colnames(orthologs)) {
+    orthologs <- detect_ortholog_types(orthologs)
+  }
+
+  n_total <- nrow(orthologs)
+  ref <- orthologs[orthologs$type == "1:1", ]
+  n_1to1 <- nrow(ref)
+
+  # Get gene names from similarity matrices
+  get_sim_genes <- function(sim) {
+    if (methods::is(sim, "TriSimilarity")) sim@genes else rownames(sim)
+  }
+  genes_sp1 <- get_sim_genes(similarity_sp1)
+  genes_sp2 <- get_sim_genes(similarity_sp2)
+
+  # Check which reference genes are present
+  in_sp1 <- ref$gene_sp1 %in% genes_sp1
+  in_sp2 <- ref$gene_sp2 %in% genes_sp2
+  in_both <- in_sp1 & in_sp2
+  n_effective <- sum(in_both)
+
+  missing_sp1 <- ref$gene_sp1[!in_sp1]
+  missing_sp2 <- ref$gene_sp2[!in_sp2]
+
+  # Build warnings
+  warnings <- character(0)
+  if (n_effective < 10) {
+    warnings <- c(warnings,
+      sprintf("CRITICAL: Only %d effective reference orthologs. CCS values will be unreliable.", n_effective))
+  } else if (n_effective < 20) {
+    warnings <- c(warnings,
+      sprintf("WARNING: Only %d effective reference orthologs. CCS estimates may be noisy.", n_effective))
+  } else if (n_effective < 50) {
+    warnings <- c(warnings,
+      sprintf("Note: %d effective reference orthologs. Consider >50 for robust CCS.", n_effective))
+  }
+
+  pct_missing <- if (n_1to1 > 0) (1 - n_effective / n_1to1) * 100 else 0
+  if (pct_missing > 20) {
+    warnings <- c(warnings,
+      sprintf("WARNING: %.1f%% of 1:1 reference genes missing from similarity matrices.", pct_missing))
+  }
+
+  # CCS distribution analysis
+  ccs_stats <- NULL
+  if (!is.null(ccs_results)) {
+    if (!"CCS" %in% colnames(ccs_results)) {
+      warnings <- c(warnings, "ccs_results provided but missing CCS column.")
+    } else {
+      # Filter to 1:1 reference pairs
+      if ("type" %in% colnames(ccs_results)) {
+        ref_ccs <- ccs_results$CCS[ccs_results$type == "1:1"]
+      } else {
+        ref_ccs <- ccs_results$CCS
+      }
+      ref_ccs <- ref_ccs[!is.na(ref_ccs)]
+
+      if (length(ref_ccs) >= 3) {
+        ccs_mean <- mean(ref_ccs)
+        ccs_sd <- stats::sd(ref_ccs)
+        ccs_median <- stats::median(ref_ccs)
+        ccs_iqr <- stats::IQR(ref_ccs)
+        # Skewness (Pearson's moment coefficient)
+        ccs_skew <- if (ccs_sd > 0) {
+          mean(((ref_ccs - ccs_mean) / ccs_sd)^3)
+        } else {
+          0
+        }
+
+        ccs_stats <- list(
+          n = length(ref_ccs),
+          median = ccs_median,
+          mean = ccs_mean,
+          sd = ccs_sd,
+          skewness = ccs_skew,
+          iqr = ccs_iqr,
+          q25 = stats::quantile(ref_ccs, 0.25, names = FALSE),
+          q75 = stats::quantile(ref_ccs, 0.75, names = FALSE)
+        )
+
+        if (abs(ccs_skew) > 1) {
+          warnings <- c(warnings,
+            sprintf("CCS distribution is skewed (skewness = %.2f). Reference may be biased.", ccs_skew))
+        }
+      }
+    }
+  }
+
+  # Print summary
+  message(sprintf("Reference set diagnostics:"))
+  message(sprintf("  Total orthologs: %d", n_total))
+  message(sprintf("  1:1 orthologs: %d (%.1f%%)", n_1to1,
+                  if (n_total > 0) n_1to1 / n_total * 100 else 0))
+  message(sprintf("  Effective (in both matrices): %d (%.1f%% of 1:1)",
+                  n_effective,
+                  if (n_1to1 > 0) n_effective / n_1to1 * 100 else 0))
+  if (length(missing_sp1) > 0) {
+    message(sprintf("  Missing from sp1 matrix: %d genes", length(missing_sp1)))
+  }
+  if (length(missing_sp2) > 0) {
+    message(sprintf("  Missing from sp2 matrix: %d genes", length(missing_sp2)))
+  }
+  if (!is.null(ccs_stats)) {
+    message(sprintf("  CCS: median=%.3f, mean=%.3f, sd=%.3f, skew=%.2f",
+                    ccs_stats$median, ccs_stats$mean, ccs_stats$sd,
+                    ccs_stats$skewness))
+  }
+  for (w in warnings) {
+    message(sprintf("  * %s", w))
+  }
+
+  list(
+    n_total = n_total,
+    n_1to1 = n_1to1,
+    pct_1to1 = if (n_total > 0) n_1to1 / n_total * 100 else 0,
+    n_effective = n_effective,
+    pct_effective = if (n_1to1 > 0) n_effective / n_1to1 * 100 else 0,
+    missing_sp1 = missing_sp1,
+    missing_sp2 = missing_sp2,
+    ccs_stats = ccs_stats,
+    warnings = warnings
   )
 }

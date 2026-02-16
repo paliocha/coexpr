@@ -19,7 +19,7 @@ summarize_conservation <- function(ors_results, by_type = TRUE) {
   if (by_type && "type" %in% colnames(ors_results)) {
     summary_df <- ors_results |>
       dplyr::group_by(.data$type) |>
-      dplyr::summarize(
+      dplyr::summarise(
         n = dplyr::n(),
         median_logORS = median(.data$logORS, na.rm = TRUE),
         mean_logORS = mean(.data$logORS, na.rm = TRUE),
@@ -30,7 +30,7 @@ summarize_conservation <- function(ors_results, by_type = TRUE) {
       )
   } else {
     summary_df <- ors_results |>
-      dplyr::summarize(
+      dplyr::summarise(
         n = dplyr::n(),
         median_logORS = median(.data$logORS, na.rm = TRUE),
         mean_logORS = mean(.data$logORS, na.rm = TRUE),
