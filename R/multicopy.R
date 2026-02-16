@@ -1050,3 +1050,192 @@ expand_reference_iteratively <- function(orthologs,
 
   result
 }
+
+
+#' Analyze expression divergence among paralogs
+#'
+#' Characterizes expression divergence patterns in multi-copy ortholog groups
+#' using CCS and ORS values from an `all_pairs` analysis. For each group of
+#' paralogs (1:N, N:1, N:M), identifies the primary (most conserved) copy,
+#' quantifies divergence between copies, and classifies divergence levels.
+#'
+#' @param ors_results Data frame from `calculate_ors()` with at minimum columns
+#'   `gene_sp1`, `gene_sp2`, `CCS`, `ORS`, and `logORS`. Should typically be
+#'   generated using `all_pairs` strategy and `directional = TRUE` in
+#'   `calculate_ors()`. Must include a `type` column with ortholog types.
+#' @param ccs_threshold Numeric. CCS threshold for classifying divergence.
+#'   Pairs with CCS above this are "conserved". Default 0.3.
+#' @param logors_threshold Numeric. logORS threshold for "highly conserved"
+#'   classification. Default 1 (top 10%).
+#'
+#' @return A list with two elements:
+#'   \describe{
+#'     \item{per_group}{Data frame with one row per multi-copy group:
+#'       \itemize{
+#'         \item `group_gene`: The gene with multiple orthologs
+#'         \item `type`: Ortholog type (1:N, N:1, or N:M)
+#'         \item `copy_number`: Number of copies in the group
+#'         \item `primary_gene`: Best-conserved copy (highest CCS)
+#'         \item `primary_ccs`: CCS of the primary copy
+#'         \item `secondary_ccs`: CCS of the second-best copy (NA if only 1)
+#'         \item `delta_ccs`: Difference between primary and secondary CCS
+#'         \item `mean_ccs`: Mean CCS across all copies
+#'         \item `classification`: One of "conserved", "partially_diverged",
+#'           "fully_diverged"
+#'       }
+#'     }
+#'     \item{by_copy_number}{Data frame summarizing divergence by copy number
+#'       (1:2, 1:3, 1:4, ...):
+#'       \itemize{
+#'         \item `copy_number`: Number of copies
+#'         \item `n_groups`: Number of ortholog groups
+#'         \item `median_primary_ccs`: Median CCS of primary copy
+#'         \item `median_delta_ccs`: Median CCS gap between primary and secondary
+#'         \item `median_logORS`: Median logORS of primary copy
+#'         \item `pct_conserved`: Percent of groups classified as conserved
+#'       }
+#'     }
+#'   }
+#'
+#' @details
+#' The paper's key finding is that 1:2, 1:3, 1:4 orthologs show progressively
+#' lower ORS (expression divergence), except for recent WGD duplicates (~13 Mya
+#' in *Glycine max*) which show no divergence.
+#'
+#' **Classification rules**:
+#' \itemize{
+#'   \item **conserved**: Primary copy CCS >= `ccs_threshold` AND
+#'     delta_CCS < 0.1 (copies are similarly conserved)
+#'   \item **partially_diverged**: Primary copy CCS >= `ccs_threshold` AND
+#'     delta_CCS >= 0.1 (one copy retains function, others diverge)
+#'   \item **fully_diverged**: Primary copy CCS < `ccs_threshold`
+#'     (all copies have diverged)
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' # Run all_pairs CCS and directional ORS
+#' orthologs_all <- handle_multicopy_orthologs(orthologs, strategy = "all_pairs")
+#' ccs <- calculate_ccs(sim_sp1, sim_sp2, orthologs_all)
+#' ors <- calculate_ors(ccs, directional = TRUE)
+#'
+#' # Analyze paralog divergence
+#' div <- analyze_paralog_divergence(ors)
+#' div$per_group     # Per-group details
+#' div$by_copy_number  # Summary by copy number
+#' }
+#'
+#' @export
+analyze_paralog_divergence <- function(ors_results,
+                                       ccs_threshold = 0.3,
+                                       logors_threshold = 1) {
+
+  # Validate input
+  required_cols <- c("gene_sp1", "gene_sp2", "CCS", "ORS", "logORS", "type")
+  missing <- setdiff(required_cols, colnames(ors_results))
+  if (length(missing) > 0) {
+    stop(sprintf("ors_results missing required columns: %s. ",
+                 paste(missing, collapse = ", ")),
+         "Run calculate_ors(calculate_ccs(...), return_log = TRUE) with type column.")
+  }
+
+  # Identify multi-copy groups
+  multicopy <- ors_results |>
+    dplyr::filter(.data$type %in% c("1:N", "N:1", "N:M"))
+
+  if (nrow(multicopy) == 0) {
+    stop("No multi-copy orthologs found in ors_results. ",
+         "Use strategy = 'all_pairs' in handle_multicopy_orthologs().")
+  }
+
+  # Type convention (from detect_ortholog_types):
+  # N:1: n_sp1 > 1 = multiple sp1 genes map to one sp2 gene -> group by gene_sp2
+  # 1:N: n_sp2 > 1 = one sp1 gene maps to multiple sp2 genes -> group by gene_sp1
+
+  # Helper to process one type using split-apply to avoid .data pronoun issues
+  process_type <- function(data, type, group_col, copy_col) {
+    if (nrow(data) == 0) return(NULL)
+
+    groups <- split(data, data[[group_col]])
+    rows <- lapply(names(groups), function(gname) {
+      g <- groups[[gname]]
+      best_idx <- which.max(g$CCS)
+      sorted_ccs <- sort(g$CCS, decreasing = TRUE, na.last = TRUE)
+      data.frame(
+        group_gene = gname,
+        type = type,
+        copy_number = nrow(g),
+        primary_gene = g[[copy_col]][best_idx],
+        primary_ccs = g$CCS[best_idx],
+        primary_logORS = g$logORS[best_idx],
+        secondary_ccs = if (nrow(g) > 1) sorted_ccs[2] else NA_real_,
+        mean_ccs = mean(g$CCS, na.rm = TRUE),
+        min_ccs = min(g$CCS, na.rm = TRUE),
+        stringsAsFactors = FALSE
+      )
+    })
+    result_df <- do.call(rbind, rows)
+    result_df$delta_ccs <- result_df$primary_ccs -
+      ifelse(is.na(result_df$secondary_ccs), result_df$primary_ccs,
+             result_df$secondary_ccs)
+    result_df$classification <- dplyr::case_when(
+      result_df$primary_ccs < ccs_threshold ~ "fully_diverged",
+      result_df$delta_ccs >= 0.1 ~ "partially_diverged",
+      TRUE ~ "conserved"
+    )
+    result_df
+  }
+
+  per_group_list <- list()
+
+  # N:1: multiple sp1 genes map to one sp2 gene -> group by gene_sp2
+  n1_data <- multicopy |> dplyr::filter(.data$type == "N:1")
+  per_group_list$n1 <- process_type(n1_data, "N:1", "gene_sp2", "gene_sp1")
+
+  # 1:N: one sp1 gene maps to multiple sp2 genes -> group by gene_sp1
+  onetomany_data <- multicopy |> dplyr::filter(.data$type == "1:N")
+  per_group_list$onetomany <- process_type(onetomany_data, "1:N", "gene_sp1",
+                                           "gene_sp2")
+
+  # N:M: group by gene_sp1 to see how each sp1 gene's copies diverge
+  nm_data <- multicopy |> dplyr::filter(.data$type == "N:M")
+  if (nrow(nm_data) > 0) {
+    per_group_list$nm <- process_type(nm_data, "N:M", "gene_sp1", "gene_sp2")
+  }
+
+  per_group <- dplyr::bind_rows(per_group_list) |>
+    dplyr::select("group_gene", "type", "copy_number", "primary_gene",
+                  "primary_ccs", "secondary_ccs", "delta_ccs", "mean_ccs",
+                  "min_ccs", "primary_logORS", "classification")
+
+  # Summarize by copy number
+  by_copy_number <- per_group |>
+    dplyr::group_by(.data$copy_number) |>
+    dplyr::summarize(
+      n_groups = dplyr::n(),
+      median_primary_ccs = stats::median(.data$primary_ccs, na.rm = TRUE),
+      median_delta_ccs = stats::median(.data$delta_ccs, na.rm = TRUE),
+      median_logORS = stats::median(.data$primary_logORS, na.rm = TRUE),
+      pct_conserved = sum(.data$classification == "conserved") /
+        dplyr::n() * 100,
+      pct_partially_diverged = sum(.data$classification == "partially_diverged") /
+        dplyr::n() * 100,
+      pct_fully_diverged = sum(.data$classification == "fully_diverged") /
+        dplyr::n() * 100,
+      .groups = "drop"
+    )
+
+  message(sprintf("Analyzed %d multi-copy groups (%d total paralog pairs)",
+                  nrow(per_group), nrow(multicopy)))
+  message(sprintf("  Copy numbers: %s",
+                  paste(sort(unique(per_group$copy_number)), collapse = ", ")))
+  message(sprintf("  Classification: %d conserved, %d partially diverged, %d fully diverged",
+                  sum(per_group$classification == "conserved"),
+                  sum(per_group$classification == "partially_diverged"),
+                  sum(per_group$classification == "fully_diverged")))
+
+  list(
+    per_group = per_group,
+    by_copy_number = by_copy_number
+  )
+}
