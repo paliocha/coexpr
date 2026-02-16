@@ -826,6 +826,84 @@ test_that("collapse_orthologs result integrates with calculate_ccs", {
 })
 
 
+# --- Tests for bootstrap confidence in collapse_orthologs ---
+
+test_that("collapse_orthologs bootstrap adds confidence columns", {
+  set.seed(42)
+  n_sp1 <- 15
+  n_sp2 <- 17
+
+  raw1 <- matrix(stats::runif(n_sp1^2, 0.1, 0.9), n_sp1, n_sp1)
+  sim_sp1 <- (raw1 + t(raw1)) / 2
+  diag(sim_sp1) <- 1
+  rownames(sim_sp1) <- colnames(sim_sp1) <- paste0("A", seq_len(n_sp1))
+
+  raw2 <- matrix(stats::runif(n_sp2^2, 0.1, 0.9), n_sp2, n_sp2)
+  sim_sp2 <- (raw2 + t(raw2)) / 2
+  diag(sim_sp2) <- 1
+  rownames(sim_sp2) <- colnames(sim_sp2) <- paste0("B", seq_len(n_sp2))
+
+  # 10 natural 1:1 + 2 N:1 groups
+  orthologs <- data.frame(
+    gene_sp1 = c(paste0("A", 1:10), "A11", "A11", "A12", "A12"),
+    gene_sp2 = c(paste0("B", 1:10), "B11", "B12", "B13", "B14")
+  )
+
+  result <- collapse_orthologs(
+    orthologs, sim_sp1, sim_sp2,
+    multicopy_sp = "sp2", max_copy_number = 2L,
+    n_bootstrap = 20
+  )
+
+  # Should have bootstrap columns
+  expect_true("selection_confidence" %in% colnames(result))
+  expect_true("score_ci_low" %in% colnames(result))
+  expect_true("score_ci_high" %in% colnames(result))
+
+  # 1:1 rows should have NA confidence
+  one_to_one_rows <- is.na(result$original_type)
+  expect_true(all(is.na(result$selection_confidence[one_to_one_rows])))
+
+  # Collapsed rows should have non-NA confidence between 0 and 1
+  collapsed_rows <- !is.na(result$original_type)
+  expect_true(all(!is.na(result$selection_confidence[collapsed_rows])))
+  expect_true(all(result$selection_confidence[collapsed_rows] >= 0))
+  expect_true(all(result$selection_confidence[collapsed_rows] <= 1))
+
+  # Score CI should bracket the point estimate (approximately)
+  for (i in which(collapsed_rows)) {
+    expect_true(result$score_ci_low[i] <= result$score_ci_high[i])
+  }
+})
+
+test_that("collapse_orthologs without bootstrap has no confidence columns", {
+  sim_sp1 <- matrix(c(
+    1.0, 0.8, 0.3,
+    0.8, 1.0, 0.4,
+    0.3, 0.4, 1.0
+  ), nrow = 3, byrow = TRUE)
+  rownames(sim_sp1) <- colnames(sim_sp1) <- c("A1", "A2", "A3")
+
+  sim_sp2 <- matrix(c(
+    1.0, 0.7, 0.5, 0.4,
+    0.7, 1.0, 0.6, 0.3,
+    0.5, 0.6, 1.0, 0.2,
+    0.4, 0.3, 0.2, 1.0
+  ), nrow = 4, byrow = TRUE)
+  rownames(sim_sp2) <- colnames(sim_sp2) <- c("B1", "B2", "B3a", "B3b")
+
+  orthologs <- data.frame(
+    gene_sp1 = c("A1", "A2", "A3", "A3"),
+    gene_sp2 = c("B1", "B2", "B3a", "B3b")
+  )
+
+  result <- collapse_orthologs(orthologs, sim_sp1, sim_sp2,
+                               multicopy_sp = "sp2")
+
+  expect_false("selection_confidence" %in% colnames(result))
+})
+
+
 # --- Tests for expand_reference_iteratively ---
 
 test_that("expand_reference_iteratively basic expansion works", {

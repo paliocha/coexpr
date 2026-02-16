@@ -525,6 +525,13 @@ aggregate_by_max <- function(orthologs, ccs_values) {
 #'       natural 1:1 pairs).}
 #'     \item{n_candidates}{Number of candidates in the group (1 for natural
 #'       1:1 pairs).}
+#'     \item{selection_confidence}{(only if `n_bootstrap > 0`) Proportion of
+#'       bootstrap replicates selecting the same candidate. Values near 1
+#'       indicate a robust choice; low values suggest the selection is sensitive
+#'       to reference composition. `NA` for natural 1:1 pairs.}
+#'     \item{score_ci_low, score_ci_high}{(only if `n_bootstrap > 0`)
+#'       2.5th and 97.5th percentile of the homeolog score across bootstrap
+#'       replicates. `NA` for natural 1:1 pairs.}
 #'   }
 #'
 #' @details
@@ -551,12 +558,20 @@ aggregate_by_max <- function(orthologs, ccs_values) {
 #' ccs <- calculate_ccs(sim_sp1, sim_sp2, expanded_ref)
 #' }
 #'
+#' @param n_bootstrap Integer. Number of bootstrap iterations to assess
+#'   selection confidence. If > 0, subsamples 80% of the reference set
+#'   `n_bootstrap` times and re-scores candidates. Adds a
+#'   `selection_confidence` column (proportion of bootstraps that select the
+#'   same candidate) and `score_ci_low`/`score_ci_high` (2.5th/97.5th
+#'   percentile of homeolog scores). Default 0 (no bootstrap).
+#'
 #' @export
 collapse_orthologs <- function(orthologs,
                                similarity_sp1,
                                similarity_sp2,
                                multicopy_sp = c("sp2", "sp1", "both"),
-                               max_copy_number = 2L) {
+                               max_copy_number = 2L,
+                               n_bootstrap = 0L) {
 
   multicopy_sp <- match.arg(multicopy_sp)
 
@@ -796,6 +811,80 @@ collapse_orthologs <- function(orthologs,
 
   # Combine all parts
   result <- dplyr::bind_rows(c(list(result_1to1), collapsed_parts))
+
+  # Bootstrap confidence assessment
+  n_bootstrap <- as.integer(n_bootstrap)
+  if (n_bootstrap > 0 && any(!is.na(result$original_type))) {
+    collapsed_idx <- which(!is.na(result$original_type))
+    n_ref <- length(ref_genes_sp1)
+    subsample_size <- max(3L, as.integer(floor(n_ref * 0.8)))
+
+    # For each collapsed row, find its group and candidates
+    boot_confidence <- rep(NA_real_, nrow(result))
+    boot_score_low <- rep(NA_real_, nrow(result))
+    boot_score_high <- rep(NA_real_, nrow(result))
+
+    for (ci in collapsed_idx) {
+      row <- result[ci, ]
+      otype <- row$original_type
+
+      # Determine which column to group by and which has the candidates
+      if (otype == "N:1") {
+        group_col <- "gene_sp1"
+        cand_col <- "gene_sp2"
+      } else if (otype == "1:N") {
+        group_col <- "gene_sp2"
+        cand_col <- "gene_sp1"
+      } else {
+        # N:M: use gene_sp1 as group
+        group_col <- "gene_sp1"
+        cand_col <- "gene_sp2"
+      }
+
+      group_val <- row[[group_col]]
+      selected_cand <- row[[cand_col]]
+
+      # Get all candidates in this group
+      cands <- orthologs[orthologs$type == otype &
+                           orthologs[[group_col]] == group_val, ]
+      if (nrow(cands) <= 1) {
+        boot_confidence[ci] <- 1.0
+        next
+      }
+
+      # Run bootstrap iterations
+      n_same <- 0L
+      boot_scores <- numeric(n_bootstrap)
+      for (b in seq_len(n_bootstrap)) {
+        idx <- sample.int(n_ref, subsample_size, replace = FALSE)
+        boot_scorer <- make_pair_scorer(
+          similarity_sp1, similarity_sp2,
+          ref_genes_sp1[idx], ref_genes_sp2[idx]
+        )
+        cand_scores <- vapply(seq_len(nrow(cands)), function(j) {
+          boot_scorer(cands$gene_sp1[j], cands$gene_sp2[j])
+        }, numeric(1))
+        best <- which.max(cand_scores)
+        if (length(best) > 0 && cands[[cand_col]][best] == selected_cand) {
+          n_same <- n_same + 1L
+        }
+        # Record the selected candidate's score
+        sel_idx <- which(cands[[cand_col]] == selected_cand)
+        boot_scores[b] <- if (length(sel_idx) > 0) cand_scores[sel_idx[1]] else NA_real_
+      }
+
+      boot_confidence[ci] <- n_same / n_bootstrap
+      boot_scores <- boot_scores[!is.na(boot_scores)]
+      if (length(boot_scores) >= 2) {
+        boot_score_low[ci] <- stats::quantile(boot_scores, 0.025, names = FALSE)
+        boot_score_high[ci] <- stats::quantile(boot_scores, 0.975, names = FALSE)
+      }
+    }
+
+    result$selection_confidence <- boot_confidence
+    result$score_ci_low <- boot_score_low
+    result$score_ci_high <- boot_score_high
+  }
 
   n_collapsed <- sum(!is.na(result$original_type))
   if (n_collapsed == 0) {

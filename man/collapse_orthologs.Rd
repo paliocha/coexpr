@@ -9,7 +9,8 @@ collapse_orthologs(
   similarity_sp1,
   similarity_sp2,
   multicopy_sp = c("sp2", "sp1", "both"),
-  max_copy_number = 2L
+  max_copy_number = 2L,
+  n_bootstrap = 0L
 )
 }
 \arguments{
@@ -34,6 +35,13 @@ transcriptomes). Handles N:M groups via greedy two-pass selection.
 \item{max_copy_number}{Integer or NULL. Only collapse groups with at most
 this many copies (default 2L, matching WGD). Set to NULL to collapse all
 group sizes.}
+
+\item{n_bootstrap}{Integer. Number of bootstrap iterations to assess
+selection confidence. If > 0, subsamples 80\% of the reference set
+\code{n_bootstrap} times and re-scores candidates. Adds a
+\code{selection_confidence} column (proportion of bootstraps that select the
+same candidate) and \code{score_ci_low}/\code{score_ci_high} (2.5th/97.5th
+percentile of homeolog scores). Default 0 (no bootstrap).}
 }
 \value{
 Data frame with columns:
@@ -47,6 +55,13 @@ seamlessly with \code{\link[=calculate_ccs]{calculate_ccs()}} \code{use_only_1to
 natural 1:1 pairs).}
 \item{n_candidates}{Number of candidates in the group (1 for natural
 1:1 pairs).}
+\item{selection_confidence}{(only if \code{n_bootstrap > 0}) Proportion of
+bootstrap replicates selecting the same candidate. Values near 1
+indicate a robust choice; low values suggest the selection is sensitive
+to reference composition. \code{NA} for natural 1:1 pairs.}
+\item{score_ci_low, score_ci_high}{(only if \code{n_bootstrap > 0})
+2.5th and 97.5th percentile of the homeolog score across bootstrap
+replicates. \code{NA} for natural 1:1 pairs.}
 }
 }
 \description{
