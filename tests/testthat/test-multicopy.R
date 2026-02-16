@@ -262,26 +262,35 @@ test_that("best_hit strategy requires similarity matrices", {
   )
 })
 
-test_that("best_hit strategy selects by average similarity", {
-  # Create small similarity matrices
+test_that("best_hit strategy selects by CCS against 1:1 reference", {
+  # 4 genes in sp1 (A1-A4), 5 in sp2 (B1-B5)
+  # 3 natural 1:1 pairs: A1-B1, A2-B2, A3-B3
+  # 1 N:1 group: A4 maps to B4 and B5
+
+  # Species 1: A4 has co-expression pattern similar to its ref pattern
   sim_sp1 <- matrix(c(
-    1.0, 0.8, 0.2,
-    0.8, 1.0, 0.3,
-    0.2, 0.3, 1.0
-  ), nrow = 3, byrow = TRUE)
-  rownames(sim_sp1) <- colnames(sim_sp1) <- c("A1", "A2", "A3")
+    1.0, 0.8, 0.3, 0.7,
+    0.8, 1.0, 0.4, 0.6,
+    0.3, 0.4, 1.0, 0.5,
+    0.7, 0.6, 0.5, 1.0
+  ), nrow = 4, byrow = TRUE)
+  rownames(sim_sp1) <- colnames(sim_sp1) <- c("A1", "A2", "A3", "A4")
 
+  # Species 2: B4 mimics A4's ref pattern well (0.7, 0.6, 0.5)
+  #            B5 has different pattern (0.1, 0.2, 0.9) — poor CCS with A4
+  #            But B5 has higher average similarity than B4 overall
   sim_sp2 <- matrix(c(
-    1.0, 0.9, 0.1,
-    0.9, 1.0, 0.4,
-    0.1, 0.4, 1.0
-  ), nrow = 3, byrow = TRUE)
-  rownames(sim_sp2) <- colnames(sim_sp2) <- c("B1", "B2", "B3")
+    1.0, 0.8, 0.3, 0.7, 0.9,
+    0.8, 1.0, 0.4, 0.6, 0.8,
+    0.3, 0.4, 1.0, 0.5, 0.9,
+    0.7, 0.6, 0.5, 1.0, 0.3,
+    0.9, 0.8, 0.9, 0.3, 1.0
+  ), nrow = 5, byrow = TRUE)
+  rownames(sim_sp2) <- colnames(sim_sp2) <- c("B1", "B2", "B3", "B4", "B5")
 
-  # A2 maps to B2 and B3 → N:1 (A2 has n_sp1=2)
   orthologs <- data.frame(
-    gene_sp1 = c("A1", "A2", "A2"),
-    gene_sp2 = c("B1", "B2", "B3")
+    gene_sp1 = c("A1", "A2", "A3", "A4", "A4"),
+    gene_sp2 = c("B1", "B2", "B3", "B4", "B5")
   )
 
   result <- handle_multicopy_orthologs(
@@ -291,13 +300,17 @@ test_that("best_hit strategy selects by average similarity", {
     similarity_sp2 = sim_sp2
   )
 
-  # A1-B1 (1:1) should be kept
-  expect_true("A1" %in% result$gene_sp1)
+  # All 1:1 pairs should be kept
+  expect_true(all(c("A1", "A2", "A3") %in% result$gene_sp1))
 
-  # A2->B2 or A2->B3: B2 has higher avg similarity ((1+0.9+0.4)/3=0.767 vs (0.1+0.4+1)/3=0.5)
-  a2_row <- result[result$gene_sp1 == "A2", ]
-  expect_equal(nrow(a2_row), 1)
-  expect_equal(a2_row$gene_sp2, "B2")
+  # A4 should select B4 (higher CCS) not B5 (higher avg similarity)
+  # B5 avg sim = (0.9+0.8+0.9+0.3+1)/5 = 0.78
+  # B4 avg sim = (0.7+0.6+0.5+1+0.3)/5 = 0.62
+  # But B4 co-expression with refs (0.7, 0.6, 0.5) correlates better with
+  # A4's ref pattern (0.7, 0.6, 0.5) than B5's (0.9, 0.8, 0.9)
+  a4_row <- result[result$gene_sp1 == "A4", ]
+  expect_equal(nrow(a4_row), 1)
+  expect_equal(a4_row$gene_sp2, "B4")
 })
 
 

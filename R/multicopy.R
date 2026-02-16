@@ -148,7 +148,11 @@ filter_1to1_only <- function(orthologs) {
 }
 
 
-#' Select best hit for multi-copy orthologs
+#' Select best hit for multi-copy orthologs using CCS-based scoring
+#'
+#' Scores each candidate pair by correlating co-expression vectors against the
+#' 1:1 reference set (preliminary CCS). Selects the highest-scoring candidate
+#' per multi-copy group.
 #'
 #' @keywords internal
 #' @noRd
@@ -158,76 +162,109 @@ select_best_hits <- function(orthologs, similarity_sp1, similarity_sp2) {
     stop("Strategy 'best_hit' requires similarity_sp1 and similarity_sp2")
   }
 
-  # Type naming convention from detect_ortholog_types:
-  #   "N:1" = n_sp1 > 1 (sp1 gene has N sp2 partners), n_sp2 == 1
-  #   "1:N" = n_sp1 == 1, n_sp2 > 1 (sp2 gene has N sp1 partners)
-
-  # For 1:1, keep as is
-  orthologs_1to1 <- orthologs |>
+  # Build 1:1 reference set for CCS-based scoring
+  ref_pairs <- orthologs |>
     dplyr::filter(.data$type == "1:1")
 
-  # N:1 — sp1 gene has N sp2 partners: pick best sp2 by average similarity
-  orthologs_Nto1 <- orthologs |>
+  get_sim_genes <- function(sim) {
+    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
+  }
+  genes_sp1 <- get_sim_genes(similarity_sp1)
+  genes_sp2 <- get_sim_genes(similarity_sp2)
+
+  ref_pairs <- ref_pairs |>
+    dplyr::filter(.data$gene_sp1 %in% genes_sp1,
+                  .data$gene_sp2 %in% genes_sp2)
+
+  if (nrow(ref_pairs) < 3) {
+    stop("Strategy 'best_hit' requires at least 3 reference 1:1 orthologs ",
+         "in both similarity matrices for CCS-based scoring")
+  }
+
+  # Score all non-1:1 candidates via preliminary CCS
+  score_fn <- make_pair_scorer(similarity_sp1, similarity_sp2,
+                               ref_pairs$gene_sp1, ref_pairs$gene_sp2)
+
+  multi <- orthologs |>
+    dplyr::filter(.data$type != "1:1")
+
+  if (nrow(multi) == 0) {
+    return(ref_pairs)
+  }
+
+  multi$score <- vapply(seq_len(nrow(multi)), function(i) {
+    score_fn(multi$gene_sp1[i], multi$gene_sp2[i])
+  }, numeric(1))
+
+  # N:1 — sp1 gene has N sp2 partners: pick best sp2 per sp1 gene
+  orthologs_Nto1 <- multi |>
     dplyr::filter(.data$type == "N:1") |>
-    dplyr::group_by(.data$gene_sp1) |>
-    dplyr::slice_max(order_by = calculate_avg_similarity(
-      .data$gene_sp2, similarity_sp2
-    ), n = 1, with_ties = FALSE) |>
-    dplyr::ungroup()
-
-  # 1:N — sp2 gene has N sp1 partners: pick best sp1 by average similarity
-  orthologs_1toN <- orthologs |>
-    dplyr::filter(.data$type == "1:N") |>
-    dplyr::group_by(.data$gene_sp2) |>
-    dplyr::slice_max(order_by = calculate_avg_similarity(
-      .data$gene_sp1, similarity_sp1
-    ), n = 1, with_ties = FALSE) |>
-    dplyr::ungroup()
-
-  # N:M — two-pass: best sp2 per sp1, then best sp1 per sp2
-  orthologs_NtoM <- orthologs |>
-    dplyr::filter(.data$type == "N:M") |>
-    dplyr::mutate(
-      score = calculate_avg_similarity(.data$gene_sp1, similarity_sp1) +
-              calculate_avg_similarity(.data$gene_sp2, similarity_sp2)
-    ) |>
     dplyr::group_by(.data$gene_sp1) |>
     dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
+    dplyr::select(-"score")
+
+  # 1:N — sp2 gene has N sp1 partners: pick best sp1 per sp2 gene
+  orthologs_1toN <- multi |>
+    dplyr::filter(.data$type == "1:N") |>
     dplyr::group_by(.data$gene_sp2) |>
     dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
     dplyr::select(-"score")
 
-  # Combine all
-  dplyr::bind_rows(orthologs_1to1, orthologs_Nto1, orthologs_1toN, orthologs_NtoM)
+  # N:M — two-pass: best sp2 per sp1, then best sp1 per sp2
+  orthologs_NtoM <- multi |>
+    dplyr::filter(.data$type == "N:M")
+
+  if (nrow(orthologs_NtoM) > 0) {
+    orthologs_NtoM <- orthologs_NtoM |>
+      dplyr::group_by(.data$gene_sp1) |>
+      dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
+      dplyr::ungroup() |>
+      dplyr::group_by(.data$gene_sp2) |>
+      dplyr::slice_max(order_by = .data$score, n = 1, with_ties = FALSE) |>
+      dplyr::ungroup() |>
+      dplyr::select(-"score")
+  } else {
+    orthologs_NtoM <- orthologs_NtoM |>
+      dplyr::select(-"score")
+  }
+
+  dplyr::bind_rows(ref_pairs, orthologs_Nto1, orthologs_1toN, orthologs_NtoM)
 }
 
 
-#' Calculate average similarity score for a gene
+#' Create a pair scoring function using preliminary CCS
 #'
+#' Returns a closure that scores an (sp1, sp2) gene pair by correlating
+#' their co-expression vectors restricted to the reference ortholog genes.
+#'
+#' @param similarity_sp1,similarity_sp2 Similarity matrices or TriSimilarity
+#' @param ref_genes_sp1,ref_genes_sp2 Character vectors of reference gene names
+#' @return Function(gene_sp1, gene_sp2) -> numeric CCS score
 #' @keywords internal
 #' @noRd
-calculate_avg_similarity <- function(gene, similarity_matrix) {
-  # Get gene names depending on object type
-  sim_genes <- if (is(similarity_matrix, "TriSimilarity")) {
-    similarity_matrix@genes
-  } else {
-    rownames(similarity_matrix)
+make_pair_scorer <- function(similarity_sp1, similarity_sp2,
+                             ref_genes_sp1, ref_genes_sp2) {
+
+  get_sim_genes <- function(sim) {
+    if (is(sim, "TriSimilarity")) sim@genes else rownames(sim)
+  }
+  genes_sp1 <- get_sim_genes(similarity_sp1)
+  genes_sp2 <- get_sim_genes(similarity_sp2)
+
+  get_col <- function(sim, gene) {
+    if (is(sim, "TriSimilarity")) extractColumn(sim, gene) else sim[, gene]
   }
 
-  # Vectorize for use with dplyr
-  vapply(gene, function(g) {
-    if (g %in% sim_genes) {
-      if (is(similarity_matrix, "TriSimilarity")) {
-        mean(extractColumn(similarity_matrix, g), na.rm = TRUE)
-      } else {
-        mean(similarity_matrix[g, ], na.rm = TRUE)
-      }
-    } else {
-      0
+  function(gene_sp1, gene_sp2) {
+    if (!(gene_sp1 %in% genes_sp1) || !(gene_sp2 %in% genes_sp2)) {
+      return(NA_real_)
     }
-  }, numeric(1))
+    vec1 <- get_col(similarity_sp1, gene_sp1)[ref_genes_sp1]
+    vec2 <- get_col(similarity_sp2, gene_sp2)[ref_genes_sp2]
+    stats::cor(vec1, vec2, use = "pairwise.complete.obs")
+  }
 }
 
 
@@ -475,23 +512,9 @@ collapse_orthologs <- function(orthologs,
   ref_genes_sp1 <- ref_pairs$gene_sp1
   ref_genes_sp2 <- ref_pairs$gene_sp2
 
-  # Helper to extract a column from either matrix type or TriSimilarity
-  get_sim_column <- function(sim, gene) {
-    if (is(sim, "TriSimilarity")) {
-      extractColumn(sim, gene)
-    } else {
-      sim[, gene]
-    }
-  }
-
-  # Score a candidate pair using preliminary CCS (correlation of co-expression
-
-  # vectors restricted to the 1:1 reference genes)
-  score_pair <- function(gene_sp1, gene_sp2) {
-    vec1 <- get_sim_column(similarity_sp1, gene_sp1)[ref_genes_sp1]
-    vec2 <- get_sim_column(similarity_sp2, gene_sp2)[ref_genes_sp2]
-    stats::cor(vec1, vec2, use = "pairwise.complete.obs")
-  }
+  # CCS-based scoring: correlate co-expression vectors against 1:1 reference
+  score_pair <- make_pair_scorer(similarity_sp1, similarity_sp2,
+                                 ref_genes_sp1, ref_genes_sp2)
 
   # Build 1:1 result rows
   result_1to1 <- ref_pairs |>
