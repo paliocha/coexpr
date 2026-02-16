@@ -19,33 +19,34 @@ using namespace arma;
 
 // Compute Pearson correlation between two vectors, handling NAs
 static double pearson_cor(const vec& x, const vec& y) {
-  uword n = x.n_elem;
-  if (n < 3) return NA_REAL;
+    uword n = x.n_elem;
+    if (n < 3) return NA_REAL;
 
-  double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-  uword count = 0;
+    double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+    uword count = 0;
 
-  for (uword i = 0; i < n; i++) {
-    if (std::isfinite(x(i)) && std::isfinite(y(i))) {
-      sx += x(i);
-      sy += y(i);
-      sxx += x(i) * x(i);
-      syy += y(i) * y(i);
-      sxy += x(i) * y(i);
-      count++;
+    for (uword i = 0; i < n; ++i) {
+        if (std::isfinite(x(i)) && std::isfinite(y(i))) {
+            sx += x(i);
+            sy += y(i);
+            sxx += x(i) * x(i);
+            syy += y(i) * y(i);
+            sxy += x(i) * y(i);
+            ++count;
+        }
     }
-  }
 
-  if (count < 3) return NA_REAL;
+    if (count < 3) return NA_REAL;
 
-  double mx = sx / count;
-  double my = sy / count;
-  double vx = sxx / count - mx * mx;
-  double vy = syy / count - my * my;
+    double mx = sx / static_cast<double>(count);
+    double my = sy / static_cast<double>(count);
+    double vx = sxx / static_cast<double>(count) - mx * mx;
+    double vy = syy / static_cast<double>(count) - my * my;
 
-  if (vx <= 0 || vy <= 0) return NA_REAL;
+    if (vx <= 0 || vy <= 0) return NA_REAL;
 
-  return (sxy / count - mx * my) / (std::sqrt(vx) * std::sqrt(vy));
+    return (sxy / static_cast<double>(count) - mx * my) /
+           (std::sqrt(vx) * std::sqrt(vy));
 }
 
 
@@ -72,52 +73,56 @@ List bootstrap_group_scores_cpp(const arma::mat& ref_sp1,
                                 int selected_idx,
                                 int n_bootstrap,
                                 unsigned int seed) {
-  uword n_ref = ref_sp1.n_rows;
-  uword n_cand = ref_sp1.n_cols;
-  uword subsample_size = std::max((uword)3, (uword)(n_ref * 0.8));
+    uword n_ref = ref_sp1.n_rows;
+    uword n_cand = ref_sp1.n_cols;
+    uword subsample_size = std::max(static_cast<uword>(3),
+                                    static_cast<uword>(n_ref * 0.8));
 
-  std::mt19937 rng(seed);
-  std::vector<uword> indices(n_ref);
-  std::iota(indices.begin(), indices.end(), 0);
+    std::mt19937 rng(seed);
+    std::vector<uword> indices(n_ref);
+    std::iota(indices.begin(), indices.end(), 0);
 
-  int n_same = 0;
-  NumericVector scores(n_bootstrap);
+    int n_same = 0;
+    NumericVector scores(n_bootstrap);
 
-  for (int b = 0; b < n_bootstrap; b++) {
-    // Subsample without replacement
-    std::shuffle(indices.begin(), indices.end(), rng);
+    for (int b = 0; b < n_bootstrap; ++b) {
+        // Subsample without replacement
+        std::shuffle(indices.begin(), indices.end(), rng);
 
-    // Extract subsampled rows
-    uvec sub_idx(subsample_size);
-    for (uword k = 0; k < subsample_size; k++) {
-      sub_idx(k) = indices[k];
+        // Extract subsampled rows
+        uvec sub_idx(subsample_size);
+        for (uword k = 0; k < subsample_size; ++k) {
+            sub_idx(k) = indices[k];
+        }
+
+        mat sub_sp1 = ref_sp1.rows(sub_idx);
+        mat sub_sp2 = ref_sp2.rows(sub_idx);
+
+        // Compute CCS for each candidate
+        double best_score = -2.0;
+        int best_cand = -1;
+
+        for (uword c = 0; c < n_cand; ++c) {
+            double score = pearson_cor(sub_sp1.col(c), sub_sp2.col(c));
+            if (std::isfinite(score) && score > best_score) {
+                best_score = score;
+                best_cand = static_cast<int>(c);
+            }
+        }
+
+        if (best_cand == selected_idx) {
+            ++n_same;
+        }
+
+        // Record score for the selected candidate
+        scores[b] = pearson_cor(
+            sub_sp1.col(static_cast<uword>(selected_idx)),
+            sub_sp2.col(static_cast<uword>(selected_idx))
+        );
     }
 
-    mat sub_sp1 = ref_sp1.rows(sub_idx);
-    mat sub_sp2 = ref_sp2.rows(sub_idx);
-
-    // Compute CCS for each candidate
-    double best_score = -2.0;
-    int best_cand = -1;
-
-    for (uword c = 0; c < n_cand; c++) {
-      double score = pearson_cor(sub_sp1.col(c), sub_sp2.col(c));
-      if (std::isfinite(score) && score > best_score) {
-        best_score = score;
-        best_cand = (int)c;
-      }
-    }
-
-    if (best_cand == selected_idx) {
-      n_same++;
-    }
-
-    // Record score for the selected candidate
-    scores[b] = pearson_cor(sub_sp1.col(selected_idx), sub_sp2.col(selected_idx));
-  }
-
-  return List::create(
-    Named("n_same") = n_same,
-    Named("scores") = scores
-  );
+    return List::create(
+        Named("n_same") = n_same,
+        Named("scores") = scores
+    );
 }

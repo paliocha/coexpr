@@ -14,7 +14,6 @@
 #include <RcppArmadillo.h>
 #include <cmath>
 #include <vector>
-#include <unordered_map>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -88,7 +87,7 @@ arma::imat discretize_matrix_cpp(const arma::mat& expr, int n_bins, int n_cores 
 
 
 // Compute entropy of a discrete variable (internal helper)
-inline double compute_entropy(const arma::ivec& x, int n_bins) {
+static double compute_entropy(const arma::ivec& x, int n_bins) {
     const uword n = x.n_elem;
 
     // Count occurrences
@@ -111,7 +110,7 @@ inline double compute_entropy(const arma::ivec& x, int n_bins) {
 
 
 // Compute joint entropy of two discrete variables (internal helper)
-inline double compute_joint_entropy(const arma::ivec& x, const arma::ivec& y, int n_bins) {
+static double compute_joint_entropy(const arma::ivec& x, const arma::ivec& y, int n_bins) {
     const uword n = x.n_elem;
 
     // Count joint occurrences using flat index
@@ -138,7 +137,7 @@ inline double compute_joint_entropy(const arma::ivec& x, const arma::ivec& y, in
 
 // Compute mutual information between two discrete variables (internal helper)
 // MI(X,Y) = H(X) + H(Y) - H(X,Y)
-inline double compute_mi(const arma::ivec& x, const arma::ivec& y, int n_bins) {
+static double compute_mi(const arma::ivec& x, const arma::ivec& y, int n_bins) {
     double h_x = compute_entropy(x, n_bins);
     double h_y = compute_entropy(y, n_bins);
     double h_xy = compute_joint_entropy(x, y, n_bins);
